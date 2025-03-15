@@ -15,7 +15,7 @@ from app.tool.base import BaseTool, ToolResult
 _BROWSER_DESCRIPTION = """
 Interact with a web browser to perform various actions such as navigation, element interaction,
 content extraction, and tab management. Supported actions include:
-- 'navigate': Go to a specific URL
+- 'navigate': Go to a specific URL (can open in current tab or new tab)
 - 'click': Click an element by index
 - 'input_text': Input text into an element
 - 'screenshot': Capture a screenshot
@@ -76,6 +76,11 @@ class BrowserUseTool(BaseTool):
                 "type": "integer",
                 "description": "Tab ID for 'switch_tab' action",
             },
+            "new_tab_for_navigate": {
+                "type": "boolean",
+                "description": "Whether to open URL in a new tab for 'navigate' action (default: false)",
+                "default": False,
+            },
         },
         "required": ["action"],
         "dependencies": {
@@ -123,6 +128,7 @@ class BrowserUseTool(BaseTool):
         script: Optional[str] = None,
         scroll_amount: Optional[int] = None,
         tab_id: Optional[int] = None,
+        new_tab_for_navigate: bool = False,
         **kwargs,
     ) -> ToolResult:
         """
@@ -136,6 +142,7 @@ class BrowserUseTool(BaseTool):
             script: JavaScript code for execution
             scroll_amount: Pixels to scroll for scroll action
             tab_id: Tab ID for switch_tab action
+            new_tab_for_navigate: Whether to open URL in a new tab for 'navigate' action
             **kwargs: Additional arguments
 
         Returns:
@@ -148,8 +155,15 @@ class BrowserUseTool(BaseTool):
                 if action == "navigate":
                     if not url:
                         return ToolResult(error="URL is required for 'navigate' action")
-                    await context.navigate_to(url)
-                    return ToolResult(output=f"Navigated to {url}")
+                    
+                    # 如果指定了在新标签页中打开，则使用create_new_tab方法
+                    if new_tab_for_navigate:
+                        await context.create_new_tab(url)
+                        return ToolResult(output=f"Opened {url} in a new tab")
+                    else:
+                        # 否则使用原来的navigate_to方法
+                        await context.navigate_to(url)
+                        return ToolResult(output=f"Navigated to {url} in current tab")
 
                 elif action == "click":
                     if index is None:

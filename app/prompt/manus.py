@@ -8,7 +8,7 @@ FileSaver: Save files locally, such as txt, py, html, etc.
 
 OSAwareFileSaver: 根据操作系统类型保存文件，自动适配Windows、macOS和Linux系统的路径格式和默认保存位置。
 
-BrowserUseTool: Open, browse, and use web browsers.If you open a local HTML file, you must provide the absolute path to the file.
+BrowserUseTool: Open, browse, and use web browsers. If you open a local HTML file, you must provide the absolute path to the file. When using the 'navigate' action, you can set 'new_tab_for_navigate' to true to open the URL in a new tab instead of the current tab.
 
 GoogleSearch: Perform web information retrieval
 
