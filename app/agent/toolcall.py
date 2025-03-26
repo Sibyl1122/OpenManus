@@ -14,18 +14,23 @@ TOOL_CALL_REQUIRED = "Tool calls required but none provided"
 
 
 class ToolCallAgent(ReActAgent):
-    """Base agent class for handling tool/function calls with enhanced abstraction"""
+    """处理工具/函数调用的基础代理类"""
 
+    # 基本属性配置
     name: str = "toolcall"
     description: str = "an agent that can execute tool calls."
-
+    
+    # 提示词配置
     system_prompt: str = SYSTEM_PROMPT
     next_step_prompt: str = NEXT_STEP_PROMPT
 
+    # 可用工具配置
     available_tools: ToolCollection = ToolCollection(
         CreateChatCompletion(), Terminate()
     )
+    # 工具选择模式：none(不使用工具)、auto(自动)、required(必须使用)
     tool_choices: Literal["none", "auto", "required"] = "auto"
+    # 特殊工具名称列表，默认包含Terminate工具
     special_tool_names: List[str] = Field(default_factory=lambda: [Terminate().name])
 
     tool_calls: List[ToolCall] = Field(default_factory=list)
@@ -34,7 +39,7 @@ class ToolCallAgent(ReActAgent):
     max_observe: Optional[Union[int, bool]] = None
 
     async def think(self) -> bool:
-        """Process current state and decide next actions using tools"""
+        """思考过程：处理当前状态并决定下一步行动"""
         if self.next_step_prompt:
             user_msg = Message.user_message(self.next_step_prompt)
             self.messages += [user_msg]
@@ -100,7 +105,7 @@ class ToolCallAgent(ReActAgent):
             return False
 
     async def act(self) -> str:
-        """Execute tool calls and handle their results"""
+        """执行工具调用并处理结果"""
         if not self.tool_calls:
             if self.tool_choices == "required":
                 raise ValueError(TOOL_CALL_REQUIRED)
@@ -128,7 +133,7 @@ class ToolCallAgent(ReActAgent):
         return "\n\n".join(results)
 
     async def execute_tool(self, command: ToolCall) -> str:
-        """Execute a single tool call with robust error handling"""
+        """执行单个工具调用，包含错误处理"""
         if not command or not command.function or not command.function.name:
             return "Error: Invalid command format"
 
@@ -151,9 +156,6 @@ class ToolCallAgent(ReActAgent):
                 else f"Cmd `{name}` completed with no output"
             )
 
-            # Handle special tools like `finish`
-            await self._handle_special_tool(name=name, result=result)
-
             return observation
         except json.JSONDecodeError:
             error_msg = f"Error parsing arguments for {name}: Invalid JSON format"
@@ -167,7 +169,7 @@ class ToolCallAgent(ReActAgent):
             return f"Error: {error_msg}"
 
     async def _handle_special_tool(self, name: str, result: Any, **kwargs):
-        """Handle special tool execution and state changes"""
+        """处理特殊工具的执行和状态变更"""
         if not self._is_special_tool(name):
             return
 

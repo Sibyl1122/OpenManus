@@ -2,11 +2,11 @@ from typing import Dict, List, Union
 
 from app.agent.base import BaseAgent
 from app.flow.base import BaseFlow, FlowType
-from app.flow.planning import PlanningFlow
+from app.flow.scheduler import SchedulerFlow
 
 
 class FlowFactory:
-    """Factory for creating different types of flows with support for multiple agents"""
+    """创建不同类型流程的工厂类"""
 
     @staticmethod
     def create_flow(
@@ -15,11 +15,11 @@ class FlowFactory:
         **kwargs,
     ) -> BaseFlow:
         flows = {
-            FlowType.PLANNING: PlanningFlow,
+            FlowType.SCHEDULER: SchedulerFlow,
         }
 
         flow_class = flows.get(flow_type)
         if not flow_class:
-            raise ValueError(f"Unknown flow type: {flow_type}")
+            raise ValueError(f"未知的流程类型: {flow_type}")
 
         return flow_class(agents, **kwargs)

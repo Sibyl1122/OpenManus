@@ -15,7 +15,8 @@ setup(
     url="https://github.com/mannaandpoem/OpenManus",
     packages=find_packages(),
     install_requires=[
-        "pydantic~=2.10.4",
+        "pydantic",
+        "jinja2",
         "openai~=1.58.1",
         "tenacity~=9.0.0",
         "pyyaml~=6.0.2",

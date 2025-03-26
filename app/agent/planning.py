@@ -1,3 +1,10 @@
+"""
+计划代理（PlanningAgent）模块
+
+这个模块实现了一个能够创建和管理任务计划的智能代理。
+它使用计划工具来创建和管理结构化的计划，并通过各个步骤跟踪进度直到任务完成。
+"""
+
 import time
 from typing import Dict, List, Literal, Optional
 
@@ -12,17 +19,17 @@ from app.tool import PlanningTool, Terminate, ToolCollection
 
 class PlanningAgent(ToolCallAgent):
     """
-    An agent that creates and manages plans to solve tasks.
+    计划代理类，用于创建和管理任务计划
 
-    This agent uses a planning tool to create and manage structured plans,
-    and tracks progress through individual steps until task completion.
+    这个代理使用计划工具来创建和管理结构化的计划，
+    并通过各个步骤跟踪进度直到任务完成。
     """
 
     name: str = "planning"
-    description: str = "An agent that creates and manages plans to solve tasks"
+    description: str = "一个能够创建和管理任务计划的代理"
 
-    system_prompt: str = PLANNING_SYSTEM_PROMPT
-    next_step_prompt: str = NEXT_STEP_PROMPT
+    system_prompt: str = PLANNING_SYSTEM_PROMPT  # 系统提示词
+    next_step_prompt: str = NEXT_STEP_PROMPT     # 下一步提示词
 
     available_tools: ToolCollection = Field(
         default_factory=lambda: ToolCollection(PlanningTool(), Terminate())
@@ -33,15 +40,15 @@ class PlanningAgent(ToolCallAgent):
     tool_calls: List[ToolCall] = Field(default_factory=list)
     active_plan_id: Optional[str] = Field(default=None)
 
-    # Add a dictionary to track the step status for each tool call
+    # 用于跟踪每个工具调用的步骤状态的字典
     step_execution_tracker: Dict[str, Dict] = Field(default_factory=dict)
     current_step_index: Optional[int] = None
 
-    max_steps: int = 20
+    max_steps: int = 20  # 最大步骤数限制
 
     @model_validator(mode="after")
     def initialize_plan_and_verify_tools(self) -> "PlanningAgent":
-        """Initialize the agent with a default plan ID and validate required tools."""
+        """初始化代理，设置默认计划ID并验证必需的工具"""
         self.active_plan_id = f"plan_{int(time.time())}"
 
         if "planning" not in self.available_tools.tool_map:
@@ -50,7 +57,7 @@ class PlanningAgent(ToolCallAgent):
         return self
 
     async def think(self) -> bool:
-        """Decide the next action based on plan status."""
+        """根据计划状态决定下一步行动"""
         prompt = (
             f"CURRENT PLAN STATUS:\n{await self.get_plan()}\n\n{self.next_step_prompt}"
             if self.active_plan_id
@@ -58,15 +65,15 @@ class PlanningAgent(ToolCallAgent):
         )
         self.messages.append(Message.user_message(prompt))
 
-        # Get the current step index before thinking
+        # 在思考前获取当前步骤索引
         self.current_step_index = await self._get_current_step_index()
 
         result = await super().think()
 
-        # After thinking, if we decided to execute a tool and it's not a planning tool or special tool,
-        # associate it with the current step for tracking
+        # 思考后，如果决定执行工具且不是计划工具或特殊工具，
+        # 将其与当前步骤关联以进行跟踪
         if result and self.tool_calls:
-            latest_tool_call = self.tool_calls[0]  # Get the most recent tool call
+            latest_tool_call = self.tool_calls[0]  # 获取最新的工具调用
             if (
                 latest_tool_call.function.name != "planning"
                 and latest_tool_call.function.name not in self.special_tool_names
@@ -75,25 +82,25 @@ class PlanningAgent(ToolCallAgent):
                 self.step_execution_tracker[latest_tool_call.id] = {
                     "step_index": self.current_step_index,
                     "tool_name": latest_tool_call.function.name,
-                    "status": "pending",  # Will be updated after execution
+                    "status": "pending",  # 将在执行后更新
                 }
 
         return result
 
     async def act(self) -> str:
-        """Execute a step and track its completion status."""
+        """执行步骤并跟踪其完成状态"""
         result = await super().act()
 
-        # After executing the tool, update the plan status
+        # 执行工具后，更新计划状态
         if self.tool_calls:
             latest_tool_call = self.tool_calls[0]
 
-            # Update the execution status to completed
+            # 更新执行状态为已完成
             if latest_tool_call.id in self.step_execution_tracker:
                 self.step_execution_tracker[latest_tool_call.id]["status"] = "completed"
                 self.step_execution_tracker[latest_tool_call.id]["result"] = result
 
-                # Update the plan status if this was a non-planning, non-special tool
+                # 如果这是非计划、非特殊工具，更新计划状态
                 if (
                     latest_tool_call.function.name != "planning"
                     and latest_tool_call.function.name not in self.special_tool_names
@@ -103,9 +110,9 @@ class PlanningAgent(ToolCallAgent):
         return result
 
     async def get_plan(self) -> str:
-        """Retrieve the current plan status."""
+        """获取当前计划状态"""
         if not self.active_plan_id:
-            return "No active plan. Please create a plan first."
+            return "没有活动计划。请先创建一个计划。"
 
         result = await self.available_tools.execute(
             name="planning",
@@ -114,32 +121,32 @@ class PlanningAgent(ToolCallAgent):
         return result.output if hasattr(result, "output") else str(result)
 
     async def run(self, request: Optional[str] = None) -> str:
-        """Run the agent with an optional initial request."""
+        """运行代理，可选择性地提供初始请求"""
         if request:
             await self.create_initial_plan(request)
         return await super().run()
 
     async def update_plan_status(self, tool_call_id: str) -> None:
         """
-        Update the current plan progress based on completed tool execution.
-        Only marks a step as completed if the associated tool has been successfully executed.
+        根据已完成的工具执行更新当前计划进度
+        仅当关联的工具成功执行后才将步骤标记为已完成
         """
         if not self.active_plan_id:
             return
 
         if tool_call_id not in self.step_execution_tracker:
-            logger.warning(f"No step tracking found for tool call {tool_call_id}")
+            logger.warning(f"未找到工具调用 {tool_call_id} 的步骤跟踪")
             return
 
         tracker = self.step_execution_tracker[tool_call_id]
         if tracker["status"] != "completed":
-            logger.warning(f"Tool call {tool_call_id} has not completed successfully")
+            logger.warning(f"工具调用 {tool_call_id} 尚未成功完成")
             return
 
         step_index = tracker["step_index"]
 
         try:
-            # Mark the step as completed
+            # 将步骤标记为已完成
             await self.available_tools.execute(
                 name="planning",
                 tool_input={
@@ -150,15 +157,15 @@ class PlanningAgent(ToolCallAgent):
                 },
             )
             logger.info(
-                f"Marked step {step_index} as completed in plan {self.active_plan_id}"
+                f"在计划 {self.active_plan_id} 中将步骤 {step_index} 标记为已完成"
             )
         except Exception as e:
-            logger.warning(f"Failed to update plan status: {e}")
+            logger.warning(f"更新计划状态失败: {e}")
 
     async def _get_current_step_index(self) -> Optional[int]:
         """
-        Parse the current plan to identify the first non-completed step's index.
-        Returns None if no active step is found.
+        解析当前计划以识别第一个未完成步骤的索引
+        如果未找到活动步骤，则返回 None
         """
         if not self.active_plan_id:
             return None
@@ -169,7 +176,7 @@ class PlanningAgent(ToolCallAgent):
             plan_lines = plan.splitlines()
             steps_index = -1
 
-            # Find the index of the "Steps:" line
+            # 查找 "Steps:" 行的索引
             for i, line in enumerate(plan_lines):
                 if line.strip() == "Steps:":
                     steps_index = i
@@ -178,10 +185,10 @@ class PlanningAgent(ToolCallAgent):
             if steps_index == -1:
                 return None
 
-            # Find the first non-completed step
+            # 查找第一个未完成的步骤
             for i, line in enumerate(plan_lines[steps_index + 1 :], start=0):
-                if "[ ]" in line or "[→]" in line:  # not_started or in_progress
-                    # Mark current step as in_progress
+                if "[ ]" in line or "[→]" in line:  # 未开始或进行中
+                    # 将当前步骤标记为进行中
                     await self.available_tools.execute(
                         name="planning",
                         tool_input={
@@ -193,18 +200,18 @@ class PlanningAgent(ToolCallAgent):
                     )
                     return i
 
-            return None  # No active step found
+            return None  # 未找到活动步骤
         except Exception as e:
-            logger.warning(f"Error finding current step index: {e}")
+            logger.warning(f"查找当前步骤索引时出错: {e}")
             return None
 
     async def create_initial_plan(self, request: str) -> None:
-        """Create an initial plan based on the request."""
-        logger.info(f"Creating initial plan with ID: {self.active_plan_id}")
+        """根据请求创建初始计划"""
+        logger.info(f"创建初始计划，ID: {self.active_plan_id}")
 
         messages = [
             Message.user_message(
-                f"Analyze the request and create a plan with ID {self.active_plan_id}: {request}"
+                f"分析请求并创建ID为 {self.active_plan_id} 的计划: {request}"
             )
         ]
         self.memory.add_messages(messages)
@@ -225,10 +232,10 @@ class PlanningAgent(ToolCallAgent):
             if tool_call.function.name == "planning":
                 result = await self.execute_tool(tool_call)
                 logger.info(
-                    f"Executed tool {tool_call.function.name} with result: {result}"
+                    f"执行工具 {tool_call.function.name}，结果: {result}"
                 )
 
-                # Add tool response to memory
+                # 将工具响应添加到内存中
                 tool_msg = Message.tool_message(
                     content=result,
                     tool_call_id=tool_call.id,
@@ -239,15 +246,15 @@ class PlanningAgent(ToolCallAgent):
                 break
 
         if not plan_created:
-            logger.warning("No plan created from initial request")
+            logger.warning("初始请求未创建计划")
             tool_msg = Message.assistant_message(
-                "Error: Parameter `plan_id` is required for command: create"
+                "错误: 命令 create 需要参数 `plan_id`"
             )
             self.memory.add_message(tool_msg)
 
 
 async def main():
-    # Configure and run the agent
+    # 配置并运行代理
     agent = PlanningAgent(available_tools=ToolCollection(PlanningTool(), Terminate()))
     result = await agent.run("Help me plan a trip to the moon")
     print(result)
