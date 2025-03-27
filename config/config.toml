@@ -1,21 +1,22 @@
 # Global LLM configuration
-[llm]
+[llm.default]
 model = "Qwen/Qwen2.5-7B-Instruct"
-base_url = "http://8.211.145.235:8000/v1"
+base_url = "http://8.211.150.31:8000/v1"
 api_key = "EMPTY"  # For local Qwen model, can be any non-empty string
 api_type = "open_ai"  # Using OpenAI-compatible API format
 max_tokens = 4096
 temperature = 0.0
+api_version = ""  # Empty string for non-Azure deployments
 
-
-# [llm] #AZURE OPENAI:
-# api_type= 'azure'
-# model = "YOUR_MODEL_NAME" #"gpt-4o-mini"
+# Azure OpenAI configuration example (commented)
+# [llm.azure]
+# api_type = "azure"
+# model = "YOUR_MODEL_NAME" #"gpt-4o-mini" 
 # base_url = "{YOUR_AZURE_ENDPOINT.rstrip('/')}/openai/deployments/{AZURE_DEPOLYMENT_ID}"
 # api_key = "AZURE API KEY"
 # max_tokens = 8096
 # temperature = 0.0
-# api_version="AZURE API VERSION" #"2024-08-01-preview"
+# api_version = "AZURE API VERSION" #"2024-08-01-preview"
 
 # Server configuration
 [server]

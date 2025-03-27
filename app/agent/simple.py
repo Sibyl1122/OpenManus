@@ -7,6 +7,8 @@ from app.agent.base import BaseAgent
 from app.logger import logger
 from app.schema import AgentState, Message, ToolCall
 from app.tool import ToolCollection
+from app.prompt.manus import NEXT_STEP_PROMPT, SYSTEM_PROMPT
+
 
 
 class SimpleAgent(BaseAgent):
@@ -24,15 +26,15 @@ class SimpleAgent(BaseAgent):
 
     async def step(self, request: Optional[str] = None) -> str:
         """执行单次步骤：调用大模型并执行工具"""
+        logger.info(f"🔍 开始执行步骤: {request}")
         # 1. 调用大模型获取工具调用
         response = await self.llm.ask_tool(
             messages=[Message.user_message(request)],
-            system_msgs=[Message.system_message(self.system_prompt)]
-            if self.system_prompt
-            else None,
+            system_msgs=[Message.system_message(SYSTEM_PROMPT)],
             tools=self.available_tools.to_params(),
             tool_choice="auto",
         )
+        
         
         # 记录大模型响应
         logger.info(f"✨ {self.name}的思考: {response.content}")
