@@ -6,7 +6,6 @@ from pydantic import Field
 from app.config import WORKSPACE_ROOT
 from app.logger import logger
 from app.tool.base import BaseTool, ToolResult
-from app.tool.browser_screenshot import BrowserScreenshot
 from app.tool.image_understanding import ImageUnderstanding
 
 Context = TypeVar("Context")
@@ -50,7 +49,6 @@ class WebVision(BaseTool, Generic[Context]):
         "required": ["goal"],
     }
 
-    screenshot_tool: BrowserScreenshot = Field(default_factory=BrowserScreenshot)
     understanding_tool: ImageUnderstanding = Field(default_factory=ImageUnderstanding)
 
     async def execute(
@@ -75,10 +73,17 @@ class WebVision(BaseTool, Generic[Context]):
         Returns:
             包含分析结果和可选的Base64编码截图的ToolResult
         """
+        from app.tool.browser_screenshot import BrowserScreenshot
+
         try:
+            # 获取或创建screenshot_tool
+            screenshot_tool = getattr(self, "screenshot_tool", None)
+            if not screenshot_tool:
+                screenshot_tool = BrowserScreenshot()
+
             # 第一步：获取网页截图
             logger.info("正在获取网页截图...")
-            screenshot_result = await self.screenshot_tool.execute(
+            screenshot_result = await screenshot_tool.execute(
                 save_path=save_path,
                 full_page=full_page
             )
@@ -89,11 +94,12 @@ class WebVision(BaseTool, Generic[Context]):
 
             # 提取保存路径信息
             saved_path = None
-            content_parts = screenshot_result.content.split()
-            for i, part in enumerate(content_parts):
-                if part == "保存到" and i < len(content_parts) - 1:
-                    saved_path = content_parts[i + 1]
-                    break
+            if hasattr(screenshot_result, 'content') and screenshot_result.content:
+                content_parts = screenshot_result.content.split()
+                for i, part in enumerate(content_parts):
+                    if part == "保存到" and i < len(content_parts) - 1:
+                        saved_path = content_parts[i + 1]
+                        break
 
             if not saved_path:
                 return ToolResult(error="无法确定截图保存路径")
@@ -132,6 +138,8 @@ class WebVision(BaseTool, Generic[Context]):
     @classmethod
     def create_with_context(cls, context: Context) -> "WebVision[Context]":
         """使用上下文创建工具实例，便于共享浏览器会话"""
+        from app.tool.browser_screenshot import BrowserScreenshot
+
         instance = cls()
         instance.screenshot_tool = BrowserScreenshot.create_with_context(context)
         return instance

@@ -9,7 +9,6 @@ from pydantic import Field
 from app.config import WORKSPACE_ROOT
 from app.logger import logger
 from app.tool.base import BaseTool, ToolResult
-from app.tool.browser_use_tool import BrowserUseTool
 
 Context = TypeVar("Context")
 
@@ -24,6 +23,7 @@ class BrowserScreenshot(BaseTool, Generic[Context]):
 - 将截图保存为图像文件
 - 返回截图的Base64编码以便后续处理
 - 自动生成带有时间戳的文件名
+- 支持直接通过URL进行截图
 """
     parameters: dict = {
         "type": "object",
@@ -36,43 +36,63 @@ class BrowserScreenshot(BaseTool, Generic[Context]):
                 "type": "boolean",
                 "description": "是否进行全页面截图（包括需要滚动才能看到的部分）。默认为true",
             },
+            "url": {
+                "type": "string",
+                "description": "要截图的网页URL。如果不指定，则对当前页面进行截图",
+            },
         },
     }
-
-    browser_tool: BrowserUseTool = Field(default_factory=BrowserUseTool)
 
     async def execute(
         self,
         save_path: Optional[str] = None,
         full_page: bool = True,
+        url: Optional[str] = None,
         **kwargs,
     ) -> ToolResult:
         """
-        对当前浏览的网页进行截图并保存。
+        对网页进行截图并保存。
 
         Args:
             save_path: 截图保存的路径，如果不指定则自动生成文件名
             full_page: 是否截取完整的页面
+            url: 要截图的网页URL，如果不指定则对当前页面进行截图
 
         Returns:
             包含截图保存路径和Base64编码的ToolResult
         """
+        from app.tool.browser_use_tool import BrowserUseTool
+
         try:
+            # 获取或创建BrowserUseTool实例
+            browser_tool = getattr(self, "browser_tool", None)
+            if not browser_tool:
+                browser_tool = BrowserUseTool()
+
             # 确保浏览器已初始化
             logger.info("正在获取浏览器当前状态...")
 
             # 确保浏览器工具已准备好使用
-            if not self.browser_tool.browser or not self.browser_tool.context:
+            if not browser_tool.browser or not browser_tool.context:
                 logger.info("初始化浏览器...")
-                await self.browser_tool._ensure_browser_initialized()
+                await browser_tool._ensure_browser_initialized()
 
-            # 获取当前页面
-            page = await self.browser_tool.context.get_current_page()
-            if not page:
-                return ToolResult(error="无法获取浏览器当前页面")
+            # 获取页面
+            if url:
+                # 如果提供了URL，创建新标签页并导航
+                logger.info(f"正在打开新标签页: {url}")
+                await browser_tool.context.create_new_tab(url)
+                page = await browser_tool.context.get_current_page()
+                await page.wait_for_load_state()
+            else:
+                # 否则获取当前页面
+                page = await browser_tool.context.get_current_page()
+                if not page:
+                    return ToolResult(error="无法获取浏览器当前页面")
+                url = page.url
+                if callable(url):
+                    url = await url()
 
-            # 获取当前URL作为参考
-            url = await page.get_current_url()
             logger.info(f"正在对页面进行截图: {url}")
 
             # 执行截图
@@ -86,9 +106,11 @@ class BrowserScreenshot(BaseTool, Generic[Context]):
                 os.makedirs(screenshots_dir, exist_ok=True)
 
                 # 基于URL和时间戳生成文件名
-                domain = url.split("//")[-1].split("/")[0].replace(".", "_")
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                filename = f"{domain}_{timestamp}.png"
+                if url:
+                    domain = url.split("//")[-1].split("/")[0].replace(".", "_")
+                    filename = f"{domain}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+                else:
+                    filename = f"screenshot_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
                 save_path = os.path.join("screenshots", filename)
 
             # 解析保存路径
@@ -106,6 +128,10 @@ class BrowserScreenshot(BaseTool, Generic[Context]):
 
             logger.info(f"截图已保存至: {full_save_path}")
 
+            # 如果是通过URL创建的标签页，关闭它
+            if url:
+                await browser_tool.context.close_current_tab()
+
             # 返回结果
             return ToolResult(
                 content=f"成功获取网页截图并保存到 {full_save_path}",
@@ -119,6 +145,8 @@ class BrowserScreenshot(BaseTool, Generic[Context]):
     @classmethod
     def create_with_context(cls, context: Context) -> "BrowserScreenshot[Context]":
         """使用上下文创建工具实例，便于共享浏览器会话"""
+        from app.tool.browser_use_tool import BrowserUseTool
+
         instance = cls()
         instance.browser_tool = BrowserUseTool.create_with_context(context)
         return instance

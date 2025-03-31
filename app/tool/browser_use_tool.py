@@ -2,6 +2,9 @@ import asyncio
 import base64
 import json
 from typing import Generic, Optional, TypeVar
+import os
+import time
+
 
 from browser_use import Browser as BrowserUseBrowser
 from browser_use import BrowserConfig
@@ -9,11 +12,18 @@ from browser_use.browser.context import BrowserContext, BrowserContextConfig
 from browser_use.dom.service import DomService
 from pydantic import Field, field_validator
 from pydantic_core.core_schema import ValidationInfo
+from app.logger import logger
+from app.config import config, WORKSPACE_ROOT
+
+
 
 from app.config import config
 from app.llm import LLM
 from app.tool.base import BaseTool, ToolResult
 from app.tool.web_search import WebSearch
+from app.tool.image_understanding import ImageUnderstanding
+
+
 
 
 _BROWSER_DESCRIPTION = """
@@ -145,6 +155,7 @@ class BrowserUseTool(BaseTool, Generic[Context]):
 
     llm: Optional[LLM] = Field(default_factory=LLM)
 
+
     @field_validator("parameters", mode="before")
     def validate_parameters(cls, v: dict, info: ValidationInfo) -> dict:
         if not v:
@@ -241,6 +252,10 @@ class BrowserUseTool(BaseTool, Generic[Context]):
                 max_content_length = getattr(
                     config.browser_config, "max_content_length", 2000
                 )
+                # 将BrowserScreenshot的导入和实例化移到这里
+                from app.tool.browser_screenshot import BrowserScreenshot
+                screenshot_tool = BrowserScreenshot()
+                image_tool = ImageUnderstanding()
 
                 # Navigation actions
                 if action == "go_to_url":
@@ -248,10 +263,67 @@ class BrowserUseTool(BaseTool, Generic[Context]):
                         return ToolResult(
                             error="URL is required for 'go_to_url' action"
                         )
-                    page = await context.get_current_page()
-                    await page.goto(url)
-                    await page.wait_for_load_state()
-                    return ToolResult(output=f"Navigated to {url}")
+                    logger.info("正在使用浏览器截图工具截取浏览器窗口...")
+
+                    # 创建screenshots目录
+                    screenshots_dir = os.path.join(os.path.dirname(__file__), "..", "screenshots")
+                    os.makedirs(screenshots_dir, exist_ok=True)
+
+                    # 生成带时间戳的文件名
+                    timestamp = int(time.time())
+                    screenshot_path = os.path.join("screenshots", f"weather_screenshot_{timestamp}.png")
+
+                    # 使用BrowserScreenshot工具获取浏览器截图
+                    screenshot_result = await screenshot_tool.execute(
+                        save_path=screenshot_path,
+                        full_page=True,
+                        url=url
+                    )
+
+                    if screenshot_result.error:
+                        logger.error(f"截图失败: {screenshot_result.error}")
+                        return
+
+                    # 提取保存的截图路径
+                    saved_path = None
+                    content_parts = screenshot_result.output.split()
+                    logger.info(f"截图结果: {screenshot_result.output}")
+
+                    # 尝试从输出中提取路径
+                    for i, part in enumerate(content_parts):
+                        if part == "保存到" and i < len(content_parts) - 1:
+                            saved_path = content_parts[i + 1]
+                            break
+
+                    # 如果没有找到路径，使用我们之前设置的路径
+                    if not saved_path:
+                        logger.info("无法从输出中提取路径，使用预设路径")
+                        saved_path = os.path.join(WORKSPACE_ROOT, screenshot_path)
+
+                    logger.info(f"截图已保存到: {saved_path}")
+
+                    # 步骤3：分析截图内容
+                    goal = "详细描述网页的内容、布局和主要功能，并提取可见的重要文本信息"
+                    logger.info(f"正在分析截图，目标: {goal}")
+
+                    # 使用配置文件中的模型进行图像分析
+                    understanding_result = await image_tool.execute(
+                        goal=goal,
+                        image_path=saved_path
+                        # 不再显式指定模型名称，使用配置中的模型
+                    )
+
+                    if understanding_result.error:
+                        logger.error(f"图像分析失败: {understanding_result.error}")
+                        return
+
+                    analysis = understanding_result.output
+                    logger.info("图像分析完成")
+
+                    # 步骤4：将结果整合到代理对话中
+                    logger.info(f"分析结果: {analysis}")
+                    return ToolResult(output=f"Navigated to {url}\n analysis: {analysis}")
+
 
                 elif action == "go_back":
                     await context.go_back()
@@ -267,25 +339,11 @@ class BrowserUseTool(BaseTool, Generic[Context]):
                             error="Query is required for 'web_search' action"
                         )
                     search_results = await self.web_search_tool.execute(query)
+                    logger.info(f"搜索结果: {search_results}")
 
                     if search_results:
-                        # Navigate to the first search result
-                        first_result = search_results[0]
-                        if isinstance(first_result, dict) and "url" in first_result:
-                            url_to_navigate = first_result["url"]
-                        elif isinstance(first_result, str):
-                            url_to_navigate = first_result
-                        else:
-                            return ToolResult(
-                                error=f"Invalid search result format: {first_result}"
-                            )
-
-                        page = await context.get_current_page()
-                        await page.goto(url_to_navigate)
-                        await page.wait_for_load_state()
-
                         return ToolResult(
-                            output=f"Searched for '{query}' and navigated to first result: {url_to_navigate}\nAll results:"
+                            output=f"Searched for '{query}'\nAll results:"
                             + "\n".join([str(r) for r in search_results])
                         )
                     else:
