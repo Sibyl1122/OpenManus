@@ -66,77 +66,74 @@ class BrowserScreenshot(BaseTool, Generic[Context]):
         try:
             # 获取或创建BrowserUseTool实例
             browser_tool = getattr(self, "browser_tool", None)
-            if not browser_tool:
-                browser_tool = BrowserUseTool()
 
-            # 确保浏览器已初始化
-            logger.info("正在获取浏览器当前状态...")
+            # 使用异步上下文管理器模式
+            async with browser_tool or BrowserUseTool() as browser:
+                # 确保浏览器已初始化
+                logger.info("正在获取浏览器当前状态...")
 
-            # 确保浏览器工具已准备好使用
-            if not browser_tool.browser or not browser_tool.context:
-                logger.info("初始化浏览器...")
-                await browser_tool._ensure_browser_initialized()
+                # 确保浏览器工具已准备好使用
+                if not browser.browser or not browser.context:
+                    logger.info("初始化浏览器...")
+                    await browser._ensure_browser_initialized()
 
-            # 获取页面
-            if url:
-                # 如果提供了URL，创建新标签页并导航
-                logger.info(f"正在打开新标签页: {url}")
-                await browser_tool.context.create_new_tab(url)
-                page = await browser_tool.context.get_current_page()
-                await page.wait_for_load_state()
-            else:
-                # 否则获取当前页面
-                page = await browser_tool.context.get_current_page()
-                if not page:
-                    return ToolResult(error="无法获取浏览器当前页面")
-                url = page.url
-                if callable(url):
-                    url = await url()
-
-            logger.info(f"正在对页面进行截图: {url}")
-
-            # 执行截图
-            screenshot_bytes = await page.screenshot(full_page=full_page)
-            base64_screenshot = base64.b64encode(screenshot_bytes).decode("utf-8")
-
-            # 确定保存路径
-            if not save_path:
-                # 创建screenshots目录
-                screenshots_dir = os.path.join(WORKSPACE_ROOT, "screenshots")
-                os.makedirs(screenshots_dir, exist_ok=True)
-
-                # 基于URL和时间戳生成文件名
+                # 获取页面
                 if url:
-                    domain = url.split("//")[-1].split("/")[0].replace(".", "_")
-                    filename = f"{domain}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+                    # 如果提供了URL，创建新标签页并导航
+                    logger.info(f"正在打开新标签页: {url}")
+                    await browser.context.create_new_tab(url)
+                    page = await browser.context.get_current_page()
+                    await page.wait_for_load_state()
                 else:
-                    filename = f"screenshot_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-                save_path = os.path.join("screenshots", filename)
+                    # 否则获取当前页面
+                    page = await browser.context.get_current_page()
+                    if not page:
+                        return ToolResult(error="无法获取浏览器当前页面")
+                    url = page.url
+                    if callable(url):
+                        url = await url()
 
-            # 解析保存路径
-            if os.path.isabs(save_path):
-                full_save_path = save_path
-            else:
-                full_save_path = os.path.join(WORKSPACE_ROOT, save_path)
+                logger.info(f"正在对页面进行截图: {url}")
 
-            # 确保目录存在
-            os.makedirs(os.path.dirname(full_save_path), exist_ok=True)
+                # 执行截图
+                screenshot_bytes = await page.screenshot(full_page=full_page)
+                base64_screenshot = base64.b64encode(screenshot_bytes).decode("utf-8")
 
-            # 保存截图
-            with open(full_save_path, "wb") as f:
-                f.write(screenshot_bytes)
+                # 确定保存路径
+                if not save_path:
+                    # 创建screenshots目录
+                    screenshots_dir = os.path.join(WORKSPACE_ROOT, "screenshots")
+                    os.makedirs(screenshots_dir, exist_ok=True)
 
-            logger.info(f"截图已保存至: {full_save_path}")
+                    # 基于URL和时间戳生成文件名
+                    if url:
+                        domain = url.split("//")[-1].split("/")[0].replace(".", "_")
+                        filename = f"{domain}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+                    else:
+                        filename = f"screenshot_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+                    save_path = os.path.join("screenshots", filename)
 
-            # 如果是通过URL创建的标签页，关闭它
-            if url:
-                await browser_tool.context.close_current_tab()
+                # 解析保存路径
+                if os.path.isabs(save_path):
+                    full_save_path = save_path
+                else:
+                    full_save_path = os.path.join(WORKSPACE_ROOT, save_path)
 
-            # 返回结果
-            return ToolResult(
-                content=f"成功获取网页截图并保存到 {full_save_path}",
-                base64_image=base64_screenshot
-            )
+                # 确保目录存在
+                os.makedirs(os.path.dirname(full_save_path), exist_ok=True)
+
+                # 保存截图
+                with open(full_save_path, "wb") as f:
+                    f.write(screenshot_bytes)
+
+                logger.info(f"截图已保存至: {full_save_path}")
+
+                # 返回结果
+                return ToolResult(
+                    output=f"成功获取网页截图并保存到 {full_save_path}",
+                    base64_image=base64_screenshot,
+                    screenshot_path=full_save_path
+                )
 
         except Exception as e:
             logger.error(f"截图过程中出错: {str(e)}")

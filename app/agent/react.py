@@ -36,3 +36,8 @@ class ReActAgent(BaseAgent, ABC):
         if not should_act:
             return "Thinking complete - no action needed"
         return await self.act()
+
+    async def initialize(self):
+        """基础初始化方法，可以被子类扩展"""
+        # 这是一个空实现，允许子类通过super().initialize()调用
+        pass

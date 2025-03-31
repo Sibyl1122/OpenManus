@@ -28,11 +28,42 @@ class MCPServer:
         self.server = FastMCP(name)
         self.tools: Dict[str, BaseTool] = {}
 
-        # Initialize standard tools
+        # 初始化除浏览器外的标准工具
         self.tools["bash"] = Bash()
-        self.tools["browser"] = BrowserUseTool()
+        # BrowserUseTool将在异步上下文中创建
         self.tools["editor"] = StrReplaceEditor()
         self.tools["terminate"] = Terminate()
+
+        # 注册异步清理回调
+        atexit.register(lambda: asyncio.run(self._cleanup_resources()))
+
+        # 浏览器工具将在需要时创建
+        self._browser_tool = None
+        self._browser_context_manager = None
+
+    async def _get_browser_tool(self):
+        """创建并返回浏览器工具的上下文管理器"""
+        if self._browser_context_manager is None:
+            logger.info("初始化浏览器工具上下文管理器")
+            self._browser_context_manager = BrowserUseTool()
+            self._browser_tool = await self._browser_context_manager.__aenter__()
+            self.tools["browser"] = self._browser_tool
+        return self._browser_tool
+
+    async def _cleanup_resources(self):
+        """清理所有资源，特别是浏览器资源"""
+        logger.info("清理服务器资源")
+        if self._browser_context_manager is not None:
+            try:
+                logger.info("正在关闭浏览器上下文")
+                await self._browser_context_manager.__aexit__(None, None, None)
+            except Exception as e:
+                logger.error(f"关闭浏览器上下文时出错: {str(e)}")
+            finally:
+                self._browser_context_manager = None
+                self._browser_tool = None
+                if "browser" in self.tools:
+                    del self.tools["browser"]
 
     def register_tool(self, tool: BaseTool, method_name: Optional[str] = None) -> None:
         """Register a tool with parameter validation and documentation."""
@@ -43,6 +74,16 @@ class MCPServer:
         # Define the async function to be registered
         async def tool_method(**kwargs):
             logger.info(f"Executing {tool_name}: {kwargs}")
+
+            # 如果是浏览器工具，确保它已经初始化
+            if tool_name == "browser":
+                tool = await self._get_browser_tool()
+            else:
+                tool = self.tools.get(tool_name)
+
+            if not tool:
+                return json.dumps({"error": f"Tool {tool_name} not found"})
+
             result = await tool.execute(**kwargs)
 
             logger.info(f"Result of {tool_name}: {result}")
@@ -137,14 +178,11 @@ class MCPServer:
 
     async def cleanup(self) -> None:
         """Clean up server resources."""
-        logger.info("Cleaning up resources")
-        # Follow original cleanup logic - only clean browser tool
-        if "browser" in self.tools and hasattr(self.tools["browser"], "cleanup"):
-            await self.tools["browser"].cleanup()
+        await self._cleanup_resources()
 
     def register_all_tools(self) -> None:
         """Register all tools with the server."""
-        for tool in self.tools.values():
+        for tool_name, tool in self.tools.items():
             self.register_tool(tool)
 
     def run(self, transport: str = "stdio") -> None:

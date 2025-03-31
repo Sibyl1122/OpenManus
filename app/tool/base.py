@@ -39,6 +39,7 @@ class ToolResult(BaseModel):
     error: Optional[str] = Field(default=None)
     base64_image: Optional[str] = Field(default=None)
     system: Optional[str] = Field(default=None)
+    screenshot_path: Optional[str] = Field(default=None)
 
     class Config:
         arbitrary_types_allowed = True
@@ -61,6 +62,7 @@ class ToolResult(BaseModel):
             error=combine_fields(self.error, other.error),
             base64_image=combine_fields(self.base64_image, other.base64_image, False),
             system=combine_fields(self.system, other.system),
+            screenshot_path=combine_fields(self.screenshot_path, other.screenshot_path, False),
         )
 
     def __str__(self):

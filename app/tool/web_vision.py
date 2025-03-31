@@ -1,4 +1,5 @@
 import os
+import time
 from typing import Generic, Optional, TypeVar
 
 from pydantic import Field
@@ -45,6 +46,14 @@ class WebVision(BaseTool, Generic[Context]):
                 "type": "boolean",
                 "description": "是否在响应中包含截图。默认为true",
             },
+            "use_selenium": {
+                "type": "boolean",
+                "description": "是否使用Selenium进行截图（作为备选方案）。默认为false",
+            },
+            "url": {
+                "type": "string",
+                "description": "要截图的URL，如果不指定则尝试获取当前浏览器URL",
+            },
         },
         "required": ["goal"],
     }
@@ -58,6 +67,8 @@ class WebVision(BaseTool, Generic[Context]):
         full_page: bool = True,
         model_name: Optional[str] = None,
         include_image_in_response: bool = True,
+        use_selenium: bool = False,
+        url: Optional[str] = None,
         **kwargs,
     ) -> ToolResult:
         """
@@ -69,6 +80,8 @@ class WebVision(BaseTool, Generic[Context]):
             full_page: 是否截取完整页面
             model_name: 要使用的多模态模型名称
             include_image_in_response: 是否在响应中包含截图
+            use_selenium: 是否使用Selenium进行截图（作为备选方案）
+            url: 要截图的URL，如果不指定则尝试获取当前浏览器URL
 
         Returns:
             包含分析结果和可选的Base64编码截图的ToolResult
@@ -85,7 +98,9 @@ class WebVision(BaseTool, Generic[Context]):
             logger.info("正在获取网页截图...")
             screenshot_result = await screenshot_tool.execute(
                 save_path=save_path,
-                full_page=full_page
+                full_page=full_page,
+                use_selenium=use_selenium,
+                url=url
             )
 
             # 检查截图是否成功
@@ -101,8 +116,23 @@ class WebVision(BaseTool, Generic[Context]):
                         saved_path = content_parts[i + 1]
                         break
 
+            # 如果没有找到路径，使用我们之前设置的路径
             if not saved_path:
-                return ToolResult(error="无法确定截图保存路径")
+                logger.info("无法从输出中提取路径，使用预设路径")
+                if save_path:
+                    if os.path.isabs(save_path):
+                        saved_path = save_path
+                    else:
+                        saved_path = os.path.join(WORKSPACE_ROOT, save_path)
+                else:
+                    # 生成临时路径
+                    timestamp = int(time.time())
+                    temp_path = os.path.join(WORKSPACE_ROOT, "screenshots", f"temp_screenshot_{timestamp}.png")
+                    saved_path = temp_path
+
+                # 检查文件是否存在
+                if not os.path.exists(saved_path):
+                    return ToolResult(error=f"无法找到截图文件: {saved_path}")
 
             # 第二步：分析截图内容
             logger.info(f"正在分析截图内容，目标: {goal}")
@@ -117,7 +147,7 @@ class WebVision(BaseTool, Generic[Context]):
                 return ToolResult(error=f"图像分析失败: {understanding_result.error}")
 
             # 获取分析结果
-            analysis = understanding_result.content
+            analysis = understanding_result.output
 
             # 构建响应
             response_content = f"网页截图已保存到 {saved_path}\n\n分析结果：\n{analysis}"
@@ -125,11 +155,11 @@ class WebVision(BaseTool, Generic[Context]):
             # 返回结果
             if include_image_in_response:
                 return ToolResult(
-                    content=response_content,
+                    output=response_content,
                     base64_image=screenshot_result.base64_image
                 )
             else:
-                return ToolResult(content=response_content)
+                return ToolResult(output=response_content)
 
         except Exception as e:
             logger.error(f"网页视觉分析过程中出错: {str(e)}")

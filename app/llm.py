@@ -30,7 +30,42 @@ from app.schema import (
     ToolChoice,
 )
 
+import requests
+import json
+import base64
+import io
+from PIL import Image
+import os
+import shutil
 
+# 检查是否安装了tesseract - 增加Homebrew路径的检查
+TESSERACT_PATH = "/opt/homebrew/bin/tesseract"  # Homebrew 安装的默认路径
+TESSERACT_AVAILABLE = os.path.exists(TESSERACT_PATH) or bool(shutil.which("tesseract"))
+
+# 如果已安装tesseract，则导入pytesseract
+if TESSERACT_AVAILABLE:
+    try:
+        import pytesseract
+        # 显式设置 Tesseract 命令的路径
+        if os.path.exists(TESSERACT_PATH):
+            pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
+        logger.info(f"Tesseract OCR 已安装，OCR功能已启用，路径: {pytesseract.pytesseract.tesseract_cmd}")
+    except ImportError:
+        TESSERACT_AVAILABLE = False
+        logger.warning("无法导入pytesseract模块，OCR功能已禁用")
+else:
+    logger.warning("系统中未安装Tesseract OCR，OCR功能已禁用")
+    logger.info("要启用OCR功能，请安装Tesseract OCR和pytesseract: ")
+    logger.info("  1. 在macOS上: brew install tesseract")
+    logger.info("  2. 在Ubuntu上: apt-get install tesseract-ocr")
+    logger.info("  3. 安装Python包: pip install pytesseract")
+
+# 添加OCR支持的设置
+USE_OCR = os.getenv("USE_OCR", "true").lower() in ("true", "1", "yes") and TESSERACT_AVAILABLE
+OCR_LANGUAGE = os.getenv("OCR_LANGUAGE", "chi_sim+eng")  # 默认优先使用简体中文，然后是英文
+OCR_CONFIG = os.getenv("OCR_CONFIG", "--psm 11 --oem 3")  # 默认OCR配置
+
+# 定义多模态模型列表
 REASONING_MODELS = ["o1", "o3-mini"]
 MULTIMODAL_MODELS = [
     "gpt-4-vision-preview",
@@ -39,8 +74,10 @@ MULTIMODAL_MODELS = [
     "claude-3-opus-20240229",
     "claude-3-sonnet-20240229",
     "claude-3-haiku-20240307",
+    "Qwen/Qwen2.5-VL-72B-Instruct",
+    "llava-hf/llava-v1.6-mistral-7b-hf",
+    "llava",
 ]
-
 
 class TokenCounter:
     # Token constants
@@ -358,288 +395,48 @@ class LLM:
 
         return formatted_messages
 
-    @retry(
-        wait=wait_random_exponential(min=1, max=60),
-        stop=stop_after_attempt(6),
-        retry=retry_if_exception_type(
-            (OpenAIError, Exception, ValueError)
-        ),  # Don't retry TokenLimitExceeded
-    )
-    async def ask(
-        self,
-        messages: List[Union[dict, Message]],
-        system_msgs: Optional[List[Union[dict, Message]]] = None,
-        stream: bool = True,
-        temperature: Optional[float] = None,
-    ) -> str:
+    def _extract_text_from_image(self, image_data_base64):
         """
-        Send a prompt to the LLM and get the response.
+        从图像中提取文本，使用OCR技术
 
         Args:
-            messages: List of conversation messages
-            system_msgs: Optional system messages to prepend
-            stream (bool): Whether to stream the response
-            temperature (float): Sampling temperature for the response
+            image_data_base64: Base64编码的图像数据
 
         Returns:
-            str: The generated response
-
-        Raises:
-            TokenLimitExceeded: If token limits are exceeded
-            ValueError: If messages are invalid or response is empty
-            OpenAIError: If API call fails after retries
-            Exception: For unexpected errors
+            str: 提取的文本，如果无法提取则返回空字符串
         """
+        if not USE_OCR:
+            return ""
+
         try:
-            # Check if the model supports images
-            supports_images = self.model in MULTIMODAL_MODELS
+            # 解码base64图像数据
+            image_data = base64.b64decode(image_data_base64)
+            image = Image.open(io.BytesIO(image_data))
 
-            # Format system and user messages with image support check
-            if system_msgs:
-                system_msgs = self.format_messages(system_msgs, supports_images)
-                messages = system_msgs + self.format_messages(messages, supports_images)
-            else:
-                messages = self.format_messages(messages, supports_images)
-
-            # Calculate input token count
-            input_tokens = self.count_message_tokens(messages)
-
-            # Check if token limits are exceeded
-            if not self.check_token_limit(input_tokens):
-                error_message = self.get_limit_error_message(input_tokens)
-                # Raise a special exception that won't be retried
-                raise TokenLimitExceeded(error_message)
-
-            params = {
-                "model": self.model,
-                "messages": messages,
-            }
-
-            if self.model in REASONING_MODELS:
-                params["max_completion_tokens"] = self.max_tokens
-            else:
-                params["max_tokens"] = self.max_tokens
-                params["temperature"] = (
-                    temperature if temperature is not None else self.temperature
-                )
-
-            if not stream:
-                # Non-streaming request
-                response = await self.client.chat.completions.create(
-                    **params, stream=False
-                )
-
-                if not response.choices or not response.choices[0].message.content:
-                    raise ValueError("Empty or invalid response from LLM")
-
-                # Update token counts
-                self.update_token_count(
-                    response.usage.prompt_tokens, response.usage.completion_tokens
-                )
-
-                return response.choices[0].message.content
-
-            # Streaming request, For streaming, update estimated token count before making the request
-            self.update_token_count(input_tokens)
-
-            response = await self.client.chat.completions.create(**params, stream=True)
-
-            collected_messages = []
-            completion_text = ""
-            async for chunk in response:
-                chunk_message = chunk.choices[0].delta.content or ""
-                collected_messages.append(chunk_message)
-                completion_text += chunk_message
-                print(chunk_message, end="", flush=True)
-
-            print()  # Newline after streaming
-            full_response = "".join(collected_messages).strip()
-            if not full_response:
-                raise ValueError("Empty response from streaming LLM")
-
-            # estimate completion tokens for streaming response
-            completion_tokens = self.count_tokens(completion_text)
-            logger.info(
-                f"Estimated completion tokens for streaming response: {completion_tokens}"
-            )
-            self.total_completion_tokens += completion_tokens
-
-            return full_response
-
-        except TokenLimitExceeded:
-            # Re-raise token limit errors without logging
-            raise
-        except ValueError:
-            logger.exception(f"Validation error")
-            raise
-        except OpenAIError as oe:
-            logger.exception(f"OpenAI API error")
-            if isinstance(oe, AuthenticationError):
-                logger.error("Authentication failed. Check API key.")
-            elif isinstance(oe, RateLimitError):
-                logger.error("Rate limit exceeded. Consider increasing retry attempts.")
-            elif isinstance(oe, APIError):
-                logger.error(f"API error: {oe}")
-            raise
-        except Exception:
-            logger.exception(f"Unexpected error in ask")
-            raise
-
-    @retry(
-        wait=wait_random_exponential(min=1, max=60),
-        stop=stop_after_attempt(6),
-        retry=retry_if_exception_type(
-            (OpenAIError, Exception, ValueError)
-        ),  # Don't retry TokenLimitExceeded
-    )
-    async def ask_with_images(
-        self,
-        messages: List[Union[dict, Message]],
-        images: List[Union[str, dict]],
-        system_msgs: Optional[List[Union[dict, Message]]] = None,
-        stream: bool = False,
-        temperature: Optional[float] = None,
-    ) -> str:
-        """
-        Send a prompt with images to the LLM and get the response.
-
-        Args:
-            messages: List of conversation messages
-            images: List of image URLs or image data dictionaries
-            system_msgs: Optional system messages to prepend
-            stream (bool): Whether to stream the response
-            temperature (float): Sampling temperature for the response
-
-        Returns:
-            str: The generated response
-
-        Raises:
-            TokenLimitExceeded: If token limits are exceeded
-            ValueError: If messages are invalid or response is empty
-            OpenAIError: If API call fails after retries
-            Exception: For unexpected errors
-        """
-        try:
-            # For ask_with_images, we always set supports_images to True because
-            # this method should only be called with models that support images
-            if self.model not in MULTIMODAL_MODELS:
-                raise ValueError(
-                    f"Model {self.model} does not support images. Use a model from {MULTIMODAL_MODELS}"
-                )
-
-            # Format messages with image support
-            formatted_messages = self.format_messages(messages, supports_images=True)
-
-            # Ensure the last message is from the user to attach images
-            if not formatted_messages or formatted_messages[-1]["role"] != "user":
-                raise ValueError(
-                    "The last message must be from the user to attach images"
-                )
-
-            # Process the last user message to include images
-            last_message = formatted_messages[-1]
-
-            # Convert content to multimodal format if needed
-            content = last_message["content"]
-            multimodal_content = (
-                [{"type": "text", "text": content}]
-                if isinstance(content, str)
-                else content
-                if isinstance(content, list)
-                else []
+            # 使用pytesseract进行OCR
+            extracted_text = pytesseract.image_to_string(
+                image,
+                lang=OCR_LANGUAGE,
+                config=OCR_CONFIG
             )
 
-            # Add images to content
-            for image in images:
-                if isinstance(image, str):
-                    multimodal_content.append(
-                        {"type": "image_url", "image_url": {"url": image}}
-                    )
-                elif isinstance(image, dict) and "url" in image:
-                    multimodal_content.append({"type": "image_url", "image_url": image})
-                elif isinstance(image, dict) and "image_url" in image:
-                    multimodal_content.append(image)
-                else:
-                    raise ValueError(f"Unsupported image format: {image}")
-
-            # Update the message with multimodal content
-            last_message["content"] = multimodal_content
-
-            # Add system messages if provided
-            if system_msgs:
-                all_messages = (
-                    self.format_messages(system_msgs, supports_images=True)
-                    + formatted_messages
-                )
+            # 清理文本
+            extracted_text = extracted_text.strip()
+            if extracted_text:
+                logger.info(f"OCR成功提取文本，长度: {len(extracted_text)}")
+                # 文本太长时截断
+                if len(extracted_text) > 1000:
+                    extracted_text = extracted_text[:997] + "..."
+                    logger.info(f"OCR文本太长，已截断")
             else:
-                all_messages = formatted_messages
+                logger.info("OCR没有提取到文本")
 
-            # Calculate tokens and check limits
-            input_tokens = self.count_message_tokens(all_messages)
-            if not self.check_token_limit(input_tokens):
-                raise TokenLimitExceeded(self.get_limit_error_message(input_tokens))
-
-            # Set up API parameters
-            params = {
-                "model": self.model,
-                "messages": all_messages,
-                "stream": stream,
-            }
-
-            # Add model-specific parameters
-            if self.model in REASONING_MODELS:
-                params["max_completion_tokens"] = self.max_tokens
-            else:
-                params["max_tokens"] = self.max_tokens
-                params["temperature"] = (
-                    temperature if temperature is not None else self.temperature
-                )
-
-            # Handle non-streaming request
-            if not stream:
-                response = await self.client.chat.completions.create(**params)
-
-                if not response.choices or not response.choices[0].message.content:
-                    raise ValueError("Empty or invalid response from LLM")
-
-                self.update_token_count(response.usage.prompt_tokens)
-                return response.choices[0].message.content
-
-            # Handle streaming request
-            self.update_token_count(input_tokens)
-            response = await self.client.chat.completions.create(**params)
-
-            collected_messages = []
-            async for chunk in response:
-                chunk_message = chunk.choices[0].delta.content or ""
-                collected_messages.append(chunk_message)
-                print(chunk_message, end="", flush=True)
-
-            print()  # Newline after streaming
-            full_response = "".join(collected_messages).strip()
-
-            if not full_response:
-                raise ValueError("Empty response from streaming LLM")
-
-            return full_response
-
-        except TokenLimitExceeded:
-            raise
-        except ValueError as ve:
-            logger.error(f"Validation error in ask_with_images: {ve}")
-            raise
-        except OpenAIError as oe:
-            logger.error(f"OpenAI API error: {oe}")
-            if isinstance(oe, AuthenticationError):
-                logger.error("Authentication failed. Check API key.")
-            elif isinstance(oe, RateLimitError):
-                logger.error("Rate limit exceeded. Consider increasing retry attempts.")
-            elif isinstance(oe, APIError):
-                logger.error(f"API error: {oe}")
-            raise
+            return extracted_text
         except Exception as e:
-            logger.error(f"Unexpected error in ask_with_images: {e}")
-            raise
+            logger.error(f"OCR提取文本失败: {e}")
+            return ""
+
+
 
     @retry(
         wait=wait_random_exponential(min=1, max=60),
@@ -735,7 +532,7 @@ class LLM:
                     temperature if temperature is not None else self.temperature
                 )
 
-            response: ChatCompletion = await self.client.chat.completions.create(
+            response = await self.client.chat.completions.create(
                 **params, stream=False
             )
 
@@ -769,4 +566,123 @@ class LLM:
             raise
         except Exception as e:
             logger.error(f"Unexpected error in ask_tool: {e}")
+            raise
+
+    @retry(
+        wait=wait_random_exponential(min=1, max=60),
+        stop=stop_after_attempt(6),
+        retry=retry_if_exception_type(
+            (OpenAIError, Exception, ValueError)
+        ),  # Don't retry TokenLimitExceeded
+    )
+    async def ask(
+        self,
+        messages: List[Union[dict, Message]],
+        system_msgs: Optional[List[Union[dict, Message]]] = None,
+        stream: bool = False,
+        temperature: Optional[float] = None,
+        **kwargs,
+    ) -> str:
+        """
+        Send a text-based prompt to the LLM and get the response.
+
+        Args:
+            messages: List of conversation messages
+            system_msgs: Optional system messages to prepend
+            stream (bool): Whether to stream the response
+            temperature (float): Sampling temperature for the response
+            **kwargs: Additional completion arguments
+
+        Returns:
+            str: The generated response
+
+        Raises:
+            TokenLimitExceeded: If token limits are exceeded
+            ValueError: If messages are invalid or response is empty
+            OpenAIError: If API call fails after retries
+            Exception: For unexpected errors
+        """
+        try:
+            # Check if the model supports images
+            supports_images = False
+            # Format messages
+            formatted_messages = self.format_messages(messages, supports_images=supports_images)
+
+            # Add system messages if provided
+            if system_msgs:
+                all_messages = (
+                    self.format_messages(system_msgs, supports_images=supports_images)
+                    + formatted_messages
+                )
+            else:
+                all_messages = formatted_messages
+
+            # Calculate tokens and check limits
+            input_tokens = self.count_message_tokens(all_messages)
+            if not self.check_token_limit(input_tokens):
+                raise TokenLimitExceeded(self.get_limit_error_message(input_tokens))
+
+            # Set up API parameters
+            params = {
+                "model": self.model,
+                "messages": all_messages,
+                "stream": stream,
+                **kwargs
+            }
+
+            # Add model-specific parameters
+            if self.model in REASONING_MODELS:
+                params["max_completion_tokens"] = self.max_tokens
+            else:
+                params["max_tokens"] = self.max_tokens
+                params["temperature"] = (
+                    temperature if temperature is not None else self.temperature
+                )
+
+            # Handle non-streaming request
+            if not stream:
+                response = await self.client.chat.completions.create(**params)
+
+                if not response.choices or not response.choices[0].message.content:
+                    raise ValueError("Empty or invalid response from LLM")
+
+                self.update_token_count(
+                    response.usage.prompt_tokens, response.usage.completion_tokens
+                )
+                return response.choices[0].message.content
+
+            # Handle streaming request
+            self.update_token_count(input_tokens)
+            response = await self.client.chat.completions.create(**params)
+
+            collected_messages = []
+            async for chunk in response:
+                chunk_message = chunk.choices[0].delta.content or ""
+                collected_messages.append(chunk_message)
+                print(chunk_message, end="", flush=True)
+
+            print()  # Newline after streaming
+            full_response = "".join(collected_messages).strip()
+
+            if not full_response:
+                raise ValueError("Empty response from streaming LLM")
+
+            return full_response
+
+        except TokenLimitExceeded:
+            raise
+        except ValueError as ve:
+            logger.error(f"Validation error in ask: {ve}")
+            raise
+        except OpenAIError as oe:
+            logger.error(f"OpenAI API error: {oe}")
+            if isinstance(oe, AuthenticationError):
+                logger.error("Authentication failed. Check API key.")
+            elif isinstance(oe, RateLimitError):
+                logger.error("Rate limit exceeded. Consider increasing retry attempts.")
+            elif isinstance(oe, APIError):
+                logger.error(f"API error: {oe}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error in ask: {e}")
             raise

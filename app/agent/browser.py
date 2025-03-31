@@ -27,51 +27,90 @@ class BrowserAgent(ToolCallAgent):
     max_observe: int = 10000
     max_steps: int = 20
 
-    # Configure the available tools
+    # 可用工具配置（不直接创建BrowserUseTool实例）
     available_tools: ToolCollection = Field(
-        default_factory=lambda: ToolCollection(BrowserUseTool(), Terminate())
+        default_factory=lambda: ToolCollection(Terminate())
     )
 
-    # Use Auto for tool choice to allow both tool usage and free-form responses
+    # 使用Auto工具选择，允许同时使用工具和自由格式的响应
     tool_choices: ToolChoice = ToolChoice.AUTO
     special_tool_names: list[str] = Field(default_factory=lambda: [Terminate().name])
 
     _current_base64_image: Optional[str] = None
+    _browser_tool: Optional[BrowserUseTool] = None
+    _browser_context_manager: Optional[BrowserUseTool] = None
+
+    async def initialize(self):
+        """初始化代理，设置浏览器工具"""
+        # 使用异步上下文管理器创建浏览器工具
+        if self._browser_context_manager is None:
+            try:
+                # 记录初始化浏览器工具的操作
+                logger.info(f"{self.name} agent initializing browser tool...")
+                self._browser_context_manager = BrowserUseTool()
+                self._browser_tool = await self._browser_context_manager.__aenter__()
+                # 将浏览器工具添加到可用工具集合
+                self.available_tools.add_tool(self._browser_tool)
+                logger.info(f"{self.name} browser tool initialized successfully")
+            except Exception as e:
+                logger.error(f"Failed to initialize browser tool: {str(e)}")
+                raise
 
     async def _handle_special_tool(self, name: str, result: Any, **kwargs):
+        """处理特殊工具的执行结果，特别是终止操作"""
         if not self._is_special_tool(name):
             return
         else:
-            await self.available_tools.get_tool(BrowserUseTool().name).cleanup()
+            # 调用父类方法处理特殊工具
             await super()._handle_special_tool(name, result, **kwargs)
 
     async def get_browser_state(self) -> Optional[dict]:
         """Get the current browser state for context in next steps."""
-        browser_tool = self.available_tools.get_tool(BrowserUseTool().name)
-        if not browser_tool:
-            return None
+        # 确保浏览器工具已初始化
+        if self._browser_tool is None:
+            await self.initialize()
 
         try:
-            # Get browser state directly from the tool
-            result = await browser_tool.get_current_state()
+            # 从工具获取浏览器状态
+            result = await self._browser_tool.get_current_state()
 
             if result.error:
                 logger.debug(f"Browser state error: {result.error}")
                 return None
 
-            # Store screenshot if available
+            # 如果有截图则保存
             if hasattr(result, "base64_image") and result.base64_image:
                 self._current_base64_image = result.base64_image
 
-            # Parse the state info
+            # 解析状态信息
             return json.loads(result.output)
 
         except Exception as e:
             logger.debug(f"Failed to get browser state: {str(e)}")
             return None
 
+    async def cleanup(self):
+        """清理代理资源，包括浏览器资源"""
+        try:
+            # 清理浏览器上下文管理器
+            if self._browser_context_manager is not None:
+                logger.info(f"{self.name} cleaning up browser resources")
+                await self._browser_context_manager.__aexit__(None, None, None)
+                self._browser_context_manager = None
+                self._browser_tool = None
+                logger.info(f"{self.name} browser resources cleaned up")
+        except Exception as e:
+            logger.error(f"Error cleaning up browser resources: {str(e)}")
+
+        # 调用父类清理方法
+        await super().cleanup()
+
     async def think(self) -> bool:
         """Process current state and decide next actions using tools, with browser state info added"""
+        # 确保浏览器工具已初始化
+        if self._browser_tool is None:
+            await self.initialize()
+
         # Add browser state to the context
         browser_state = await self.get_browser_state()
 

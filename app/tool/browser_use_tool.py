@@ -16,7 +16,6 @@ from app.logger import logger
 from app.config import config, WORKSPACE_ROOT
 
 
-
 from app.config import config
 from app.llm import LLM
 from app.tool.base import BaseTool, ToolResult
@@ -24,36 +23,12 @@ from app.tool.web_search import WebSearch
 from app.tool.image_understanding import ImageUnderstanding
 
 
-
-
 _BROWSER_DESCRIPTION = """
-Interact with a web browser to perform various actions such as navigation, element interaction, content extraction, and tab management. This tool provides a comprehensive set of browser automation capabilities:
+Interact with a web browser to perform various actions. This tool provides browser automation capabilities:
 
 Navigation:
 - 'go_to_url': Go to a specific URL in the current tab
-- 'go_back': Go back
-- 'refresh': Refresh the current page
 - 'web_search': Search the query in the current tab, the query should be a search query like humans search in web, concrete and not vague or super long. More the single most important items.
-
-Element Interaction:
-- 'click_element': Click an element by index
-- 'input_text': Input text into a form element
-- 'scroll_down'/'scroll_up': Scroll the page (with optional pixel amount)
-- 'scroll_to_text': If you dont find something which you want to interact with, scroll to it
-- 'send_keys': Send strings of special keys like Escape,Backspace, Insert, PageDown, Delete, Enter, Shortcuts such as `Control+o`, `Control+Shift+T` are supported as well. This gets used in keyboard.press.
-- 'get_dropdown_options': Get all options from a dropdown
-- 'select_dropdown_option': Select dropdown option for interactive element index by the text of the option you want to select
-
-Content Extraction:
-- 'extract_content': Extract page content to retrieve specific information from the page, e.g. all company names, a specifc description, all information about, links with companies in structured format or simply links
-
-Tab Management:
-- 'switch_tab': Switch to a specific tab
-- 'open_tab': Open a new tab with a URL
-- 'close_tab': Close the current tab
-
-Utility:
-- 'wait': Wait for a specified number of seconds
 """
 
 Context = TypeVar("Context")
@@ -69,78 +44,23 @@ class BrowserUseTool(BaseTool, Generic[Context]):
                 "type": "string",
                 "enum": [
                     "go_to_url",
-                    "click_element",
-                    "input_text",
-                    "scroll_down",
-                    "scroll_up",
-                    "scroll_to_text",
-                    "send_keys",
-                    "get_dropdown_options",
-                    "select_dropdown_option",
-                    "go_back",
                     "web_search",
-                    "wait",
-                    "extract_content",
-                    "switch_tab",
-                    "open_tab",
-                    "close_tab",
                 ],
                 "description": "The browser action to perform",
             },
             "url": {
                 "type": "string",
-                "description": "URL for 'go_to_url' or 'open_tab' actions",
-            },
-            "index": {
-                "type": "integer",
-                "description": "Element index for 'click_element', 'input_text', 'get_dropdown_options', or 'select_dropdown_option' actions",
-            },
-            "text": {
-                "type": "string",
-                "description": "Text for 'input_text', 'scroll_to_text', or 'select_dropdown_option' actions",
-            },
-            "scroll_amount": {
-                "type": "integer",
-                "description": "Pixels to scroll (positive for down, negative for up) for 'scroll_down' or 'scroll_up' actions",
-            },
-            "tab_id": {
-                "type": "integer",
-                "description": "Tab ID for 'switch_tab' action",
+                "description": "URL for 'go_to_url' action",
             },
             "query": {
                 "type": "string",
                 "description": "Search query for 'web_search' action",
             },
-            "goal": {
-                "type": "string",
-                "description": "Extraction goal for 'extract_content' action",
-            },
-            "keys": {
-                "type": "string",
-                "description": "Keys to send for 'send_keys' action",
-            },
-            "seconds": {
-                "type": "integer",
-                "description": "Seconds to wait for 'wait' action",
-            },
         },
         "required": ["action"],
         "dependencies": {
             "go_to_url": ["url"],
-            "click_element": ["index"],
-            "input_text": ["index", "text"],
-            "switch_tab": ["tab_id"],
-            "open_tab": ["url"],
-            "scroll_down": ["scroll_amount"],
-            "scroll_up": ["scroll_amount"],
-            "scroll_to_text": ["text"],
-            "send_keys": ["keys"],
-            "get_dropdown_options": ["index"],
-            "select_dropdown_option": ["index", "text"],
-            "go_back": [],
             "web_search": ["query"],
-            "wait": ["seconds"],
-            "extract_content": ["goal"],
         },
     }
 
@@ -213,45 +133,71 @@ class BrowserUseTool(BaseTool, Generic[Context]):
 
     async def execute(
         self,
-        action: str,
-        url: Optional[str] = None,
-        index: Optional[int] = None,
-        text: Optional[str] = None,
-        scroll_amount: Optional[int] = None,
-        tab_id: Optional[int] = None,
-        query: Optional[str] = None,
-        goal: Optional[str] = None,
-        keys: Optional[str] = None,
-        seconds: Optional[int] = None,
-        **kwargs,
+        *args,
+        **kwargs
     ) -> ToolResult:
         """
         Execute a specified browser action.
 
-        Args:
-            action: The browser action to perform
-            url: URL for navigation or new tab
-            index: Element index for click or input actions
-            text: Text for input action or search query
-            scroll_amount: Pixels to scroll for scroll action
-            tab_id: Tab ID for switch_tab action
-            query: Search query for Google search
-            goal: Extraction goal for content extraction
-            keys: Keys to send for keyboard actions
-            seconds: Seconds to wait
-            **kwargs: Additional arguments
+        The method can be called in several ways:
+        - With named parameters: execute(action="go_to_url", url="https://example.com")
+        - With a JSON string parameter: execute(tool_input='{"action": "go_to_url", "url": "https://example.com"}')
+        - With a dictionary: execute({'action': 'go_to_url', 'url': 'https://example.com'})
 
         Returns:
             ToolResult with the action's output or error
         """
+        action = None
+        url = None
+        query = None
+
+        # Case 1: Parameters passed directly as kwargs
+        if 'action' in kwargs:
+            action = kwargs.get('action')
+            url = kwargs.get('url')
+            query = kwargs.get('query')
+
+        # Case 2: First arg is a dict with parameters
+        elif args and isinstance(args[0], dict):
+            params = args[0]
+            action = params.get('action')
+            url = params.get('url')
+            query = params.get('query')
+
+        # Case 3: tool_input is a string (JSON)
+        elif 'tool_input' in kwargs and isinstance(kwargs['tool_input'], str):
+            try:
+                params = json.loads(kwargs['tool_input'])
+                action = params.get('action')
+                url = params.get('url')
+                query = params.get('query')
+            except json.JSONDecodeError:
+                return ToolResult(error="Invalid JSON in tool_input for browser_use tool")
+
+        # Case 4: Any parameter is a string that looks like JSON
+        elif not action:
+            for k, v in kwargs.items():
+                if isinstance(v, str) and v.strip().startswith('{') and v.strip().endswith('}'):
+                    try:
+                        params = json.loads(v)
+                        if isinstance(params, dict) and 'action' in params:
+                            action = params.get('action')
+                            url = params.get('url')
+                            query = params.get('query')
+                            break
+                    except json.JSONDecodeError:
+                        continue
+
+        # Log the received parameters for debugging
+        logger.info(f"Browser tool received: args={args}, kwargs={kwargs}, parsed: action={action}, url={url}, query={query}")
+
+        if not action:
+            return ToolResult(error="No action specified for browser_use tool. Make sure to provide the 'action' parameter.")
+
         async with self.lock:
             try:
                 context = await self._ensure_browser_initialized()
 
-                # Get max content length from config
-                max_content_length = getattr(
-                    config.browser_config, "max_content_length", 2000
-                )
                 # 将BrowserScreenshot的导入和实例化移到这里
                 from app.tool.browser_screenshot import BrowserScreenshot
                 screenshot_tool = BrowserScreenshot()
@@ -284,21 +230,14 @@ class BrowserUseTool(BaseTool, Generic[Context]):
                         logger.error(f"截图失败: {screenshot_result.error}")
                         return
 
-                    # 提取保存的截图路径
-                    saved_path = None
-                    content_parts = screenshot_result.output.split()
-                    logger.info(f"截图结果: {screenshot_result.output}")
-
-                    # 尝试从输出中提取路径
-                    for i, part in enumerate(content_parts):
-                        if part == "保存到" and i < len(content_parts) - 1:
-                            saved_path = content_parts[i + 1]
-                            break
-
-                    # 如果没有找到路径，使用我们之前设置的路径
+                    # 直接使用screenshot_result中的screenshot_path
+                    saved_path = screenshot_result.screenshot_path
                     if not saved_path:
-                        logger.info("无法从输出中提取路径，使用预设路径")
+                        # 如果BrowserScreenshot工具未返回path，使用预设路径
                         saved_path = os.path.join(WORKSPACE_ROOT, screenshot_path)
+                        logger.info(f"未获取到screenshot_path，使用预设路径: {saved_path}")
+                    else:
+                        logger.info(f"从screenshot_result获取保存路径: {saved_path}")
 
                     logger.info(f"截图已保存到: {saved_path}")
 
@@ -315,23 +254,21 @@ class BrowserUseTool(BaseTool, Generic[Context]):
 
                     if understanding_result.error:
                         logger.error(f"图像分析失败: {understanding_result.error}")
-                        return
+                        return ToolResult(
+                            error=f"图像分析失败: {understanding_result.error}",
+                            screenshot_path=saved_path
+                        )
 
                     analysis = understanding_result.output
                     logger.info("图像分析完成")
 
                     # 步骤4：将结果整合到代理对话中
                     logger.info(f"分析结果: {analysis}")
-                    return ToolResult(output=f"Navigated to {url}\n analysis: {analysis}")
-
-
-                elif action == "go_back":
-                    await context.go_back()
-                    return ToolResult(output="Navigated back")
-
-                elif action == "refresh":
-                    await context.refresh_page()
-                    return ToolResult(output="Refreshed current page")
+                    return ToolResult(
+                        output=f"Navigated to {url}\n analysis: {analysis}",
+                        screenshot_path=saved_path,
+                        base64_image=screenshot_result.base64_image if hasattr(screenshot_result, 'base64_image') else None
+                    )
 
                 elif action == "web_search":
                     if not query:
@@ -351,257 +288,11 @@ class BrowserUseTool(BaseTool, Generic[Context]):
                             error=f"No search results found for '{query}'"
                         )
 
-                # Element interaction actions
-                elif action == "click_element":
-                    if index is None:
-                        return ToolResult(
-                            error="Index is required for 'click_element' action"
-                        )
-                    element = await context.get_dom_element_by_index(index)
-                    if not element:
-                        return ToolResult(error=f"Element with index {index} not found")
-                    download_path = await context._click_element_node(element)
-                    output = f"Clicked element at index {index}"
-                    if download_path:
-                        output += f" - Downloaded file to {download_path}"
-                    return ToolResult(output=output)
-
-                elif action == "input_text":
-                    if index is None or not text:
-                        return ToolResult(
-                            error="Index and text are required for 'input_text' action"
-                        )
-                    element = await context.get_dom_element_by_index(index)
-                    if not element:
-                        return ToolResult(error=f"Element with index {index} not found")
-                    await context._input_text_element_node(element, text)
-                    return ToolResult(
-                        output=f"Input '{text}' into element at index {index}"
-                    )
-
-                elif action == "scroll_down" or action == "scroll_up":
-                    direction = 1 if action == "scroll_down" else -1
-                    amount = (
-                        scroll_amount
-                        if scroll_amount is not None
-                        else context.config.browser_window_size["height"]
-                    )
-                    await context.execute_javascript(
-                        f"window.scrollBy(0, {direction * amount});"
-                    )
-                    return ToolResult(
-                        output=f"Scrolled {'down' if direction > 0 else 'up'} by {amount} pixels"
-                    )
-
-                elif action == "scroll_to_text":
-                    if not text:
-                        return ToolResult(
-                            error="Text is required for 'scroll_to_text' action"
-                        )
-                    page = await context.get_current_page()
-                    try:
-                        locator = page.get_by_text(text, exact=False)
-                        await locator.scroll_into_view_if_needed()
-                        return ToolResult(output=f"Scrolled to text: '{text}'")
-                    except Exception as e:
-                        return ToolResult(error=f"Failed to scroll to text: {str(e)}")
-
-                elif action == "send_keys":
-                    if not keys:
-                        return ToolResult(
-                            error="Keys are required for 'send_keys' action"
-                        )
-                    page = await context.get_current_page()
-                    await page.keyboard.press(keys)
-                    return ToolResult(output=f"Sent keys: {keys}")
-
-                elif action == "get_dropdown_options":
-                    if index is None:
-                        return ToolResult(
-                            error="Index is required for 'get_dropdown_options' action"
-                        )
-                    element = await context.get_dom_element_by_index(index)
-                    if not element:
-                        return ToolResult(error=f"Element with index {index} not found")
-                    page = await context.get_current_page()
-                    options = await page.evaluate(
-                        """
-                        (xpath) => {
-                            const select = document.evaluate(xpath, document, null,
-                                XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-                            if (!select) return null;
-                            return Array.from(select.options).map(opt => ({
-                                text: opt.text,
-                                value: opt.value,
-                                index: opt.index
-                            }));
-                        }
-                    """,
-                        element.xpath,
-                    )
-                    return ToolResult(output=f"Dropdown options: {options}")
-
-                elif action == "select_dropdown_option":
-                    if index is None or not text:
-                        return ToolResult(
-                            error="Index and text are required for 'select_dropdown_option' action"
-                        )
-                    element = await context.get_dom_element_by_index(index)
-                    if not element:
-                        return ToolResult(error=f"Element with index {index} not found")
-                    page = await context.get_current_page()
-                    await page.select_option(element.xpath, label=text)
-                    return ToolResult(
-                        output=f"Selected option '{text}' from dropdown at index {index}"
-                    )
-
-                # Content extraction actions
-                elif action == "extract_content":
-                    if not goal:
-                        return ToolResult(
-                            error="Goal is required for 'extract_content' action"
-                        )
-                    page = await context.get_current_page()
-                    try:
-                        # Get page content and convert to markdown for better processing
-                        html_content = await page.content()
-
-                        # Import markdownify here to avoid global import
-                        try:
-                            import markdownify
-
-                            content = markdownify.markdownify(html_content)
-                        except ImportError:
-                            # Fallback if markdownify is not available
-                            content = html_content
-
-                        # Create prompt for LLM
-                        prompt_text = """
-Your task is to extract the content of the page. You will be given a page and a goal, and you should extract all relevant information around this goal from the page. If the goal is vague, summarize the page. Respond in json format.
-Extraction goal: {goal}
-
-Page content:
-{page}
-"""
-                        # Format the prompt with the goal and content
-                        max_content_length = min(50000, len(content))
-                        formatted_prompt = prompt_text.format(
-                            goal=goal, page=content[:max_content_length]
-                        )
-
-                        # Create a proper message list for the LLM
-                        from app.schema import Message
-
-                        messages = [Message.user_message(formatted_prompt)]
-
-                        # Define extraction function for the tool
-                        extraction_function = {
-                            "type": "function",
-                            "function": {
-                                "name": "extract_content",
-                                "description": "Extract specific information from a webpage based on a goal",
-                                "parameters": {
-                                    "type": "object",
-                                    "properties": {
-                                        "extracted_content": {
-                                            "type": "object",
-                                            "description": "The content extracted from the page according to the goal",
-                                            "properties": {
-                                                "text": {
-                                                    "type": "string",
-                                                    "description": "Text content extracted from the page",
-                                                },
-                                                "metadata": {
-                                                    "type": "object",
-                                                    "description": "Additional metadata about the extracted content",
-                                                    "properties": {
-                                                        "source": {
-                                                            "type": "string",
-                                                            "description": "Source of the extracted content",
-                                                        }
-                                                    },
-                                                },
-                                            },
-                                        }
-                                    },
-                                    "required": ["extracted_content"],
-                                },
-                            },
-                        }
-
-                        # Use LLM to extract content with required function calling
-                        response = await self.llm.ask_tool(
-                            messages,
-                            tools=[extraction_function],
-                            tool_choice="required",
-                        )
-
-                        # Extract content from function call response
-                        if (
-                            response
-                            and response.tool_calls
-                            and len(response.tool_calls) > 0
-                        ):
-                            # Get the first tool call arguments
-                            tool_call = response.tool_calls[0]
-                            # Parse the JSON arguments
-                            try:
-                                args = json.loads(tool_call.function.arguments)
-                                extracted_content = args.get("extracted_content", {})
-                                # Format extracted content as JSON string
-                                content_json = json.dumps(
-                                    extracted_content, indent=2, ensure_ascii=False
-                                )
-                                msg = f"Extracted from page:\n{content_json}\n"
-                            except Exception as e:
-                                msg = f"Error parsing extraction result: {str(e)}\nRaw response: {tool_call.function.arguments}"
-                        else:
-                            msg = "No content was extracted from the page."
-
-                        return ToolResult(output=msg)
-                    except Exception as e:
-                        # Provide a more helpful error message
-                        error_msg = f"Failed to extract content: {str(e)}"
-                        try:
-                            # Try to return a portion of the page content as fallback
-                            return ToolResult(
-                                output=f"{error_msg}\nHere's a portion of the page content:\n{content[:2000]}..."
-                            )
-                        except:
-                            # If all else fails, just return the error
-                            return ToolResult(error=error_msg)
-
-                # Tab management actions
-                elif action == "switch_tab":
-                    if tab_id is None:
-                        return ToolResult(
-                            error="Tab ID is required for 'switch_tab' action"
-                        )
-                    await context.switch_to_tab(tab_id)
-                    page = await context.get_current_page()
-                    await page.wait_for_load_state()
-                    return ToolResult(output=f"Switched to tab {tab_id}")
-
-                elif action == "open_tab":
-                    if not url:
-                        return ToolResult(error="URL is required for 'open_tab' action")
-                    await context.create_new_tab(url)
-                    return ToolResult(output=f"Opened new tab with {url}")
-
-                elif action == "close_tab":
-                    await context.close_current_tab()
-                    return ToolResult(output="Closed current tab")
-
-                # Utility actions
-                elif action == "wait":
-                    seconds_to_wait = seconds if seconds is not None else 3
-                    await asyncio.sleep(seconds_to_wait)
-                    return ToolResult(output=f"Waited for {seconds_to_wait} seconds")
-
                 else:
                     return ToolResult(error=f"Unknown action: {action}")
 
             except Exception as e:
+                logger.error(f"Browser action error: {str(e)}", exc_info=True)
                 return ToolResult(error=f"Browser action '{action}' failed: {str(e)}")
 
     async def get_current_state(
@@ -643,20 +334,6 @@ Page content:
                 "url": state.url,
                 "title": state.title,
                 "tabs": [tab.model_dump() for tab in state.tabs],
-                "help": "[0], [1], [2], etc., represent clickable indices corresponding to the elements listed. Clicking on these indices will navigate to or interact with the respective content behind them.",
-                "interactive_elements": (
-                    state.element_tree.clickable_elements_to_string()
-                    if state.element_tree
-                    else ""
-                ),
-                "scroll_info": {
-                    "pixels_above": getattr(state, "pixels_above", 0),
-                    "pixels_below": getattr(state, "pixels_below", 0),
-                    "total_height": getattr(state, "pixels_above", 0)
-                    + getattr(state, "pixels_below", 0)
-                    + viewport_height,
-                },
-                "viewport_height": viewport_height,
             }
 
             return ToolResult(
@@ -667,25 +344,93 @@ Page content:
             return ToolResult(error=f"Failed to get browser state: {str(e)}")
 
     async def cleanup(self):
-        """Clean up browser resources."""
+        """
+        Clean up browser resources asynchronously.
+        Safe to call multiple times.
+        """
         async with self.lock:
+            # 关闭上下文
             if self.context is not None:
-                await self.context.close()
-                self.context = None
-                self.dom_service = None
+                try:
+                    logger.info("Closing browser context")
+                    await self.context.close()
+                except Exception as e:
+                    logger.error(f"Error closing browser context: {str(e)}", exc_info=True)
+                finally:
+                    self.context = None
+                    self.dom_service = None
+
+            # 关闭浏览器
             if self.browser is not None:
-                await self.browser.close()
-                self.browser = None
+                try:
+                    logger.info("Closing browser")
+                    await self.browser.close()
+                except Exception as e:
+                    logger.error(f"Error closing browser: {str(e)}", exc_info=True)
+                finally:
+                    self.browser = None
+
+    def shutdown(self):
+        """
+        Synchronous method to shut down browser resources.
+        This should be called explicitly when the application is shutting down.
+        Safe to call multiple times.
+        """
+        # 如果没有需要清理的资源，直接返回
+        if self.browser is None and self.context is None:
+            return
+
+        try:
+            # 尝试获取当前运行的事件循环
+            try:
+                loop = asyncio.get_running_loop()
+                # 如果事件循环正在运行，创建任务
+                if loop.is_running():
+                    logger.info("Scheduling browser cleanup in running event loop")
+                    # 创建任务但不等待其完成，这样不会阻塞调用者
+                    loop.create_task(self.cleanup())
+                    return
+                else:
+                    # 如果循环存在但未运行，使用它清理资源
+                    logger.info("Using existing event loop for browser cleanup")
+                    loop.run_until_complete(self.cleanup())
+            except RuntimeError:
+                # 没有事件循环存在，创建一个新的
+                logger.info("Creating new event loop for browser cleanup")
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    loop.run_until_complete(self.cleanup())
+                finally:
+                    loop.close()
+                    asyncio.set_event_loop(None)  # 移除事件循环引用，避免内存泄漏
+        except Exception as e:
+            logger.error(f"Error during browser shutdown: {str(e)}", exc_info=True)
 
     def __del__(self):
-        """Ensure cleanup when object is destroyed."""
+        """
+        Object destructor - we attempt to schedule cleanup if browser or context still exists.
+        Applications should call shutdown() explicitly instead of relying on garbage collection.
+        """
         if self.browser is not None or self.context is not None:
+            logger.warning(
+                "BrowserUseTool is being garbage collected without explicit shutdown. "
+                "Resources may leak. Call shutdown() or use an async context manager."
+            )
+
+            # Try to schedule cleanup if in a running event loop
             try:
-                asyncio.run(self.cleanup())
+                loop = asyncio.get_running_loop()
+                if not loop.is_closed():
+                    # Schedule cleanup as a future task to avoid runtime errors
+                    loop.create_task(self.cleanup())
+                    logger.info("Scheduled browser cleanup in the current event loop")
             except RuntimeError:
-                loop = asyncio.new_event_loop()
-                loop.run_until_complete(self.cleanup())
-                loop.close()
+                # No running event loop, try one last synchronous attempt
+                try:
+                    self.shutdown()
+                except Exception as e:
+                    logger.error(f"Failed to clean up browser resources during garbage collection: {str(e)}")
 
     @classmethod
     def create_with_context(cls, context: Context) -> "BrowserUseTool[Context]":
@@ -693,3 +438,17 @@ Page content:
         tool = cls()
         tool.tool_context = context
         return tool
+
+    async def __aenter__(self) -> "BrowserUseTool":
+        """
+        Enable async context manager support.
+        Example:
+            async with BrowserUseTool() as browser_tool:
+                await browser_tool.execute(action="go_to_url", url="https://example.com")
+        """
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Clean up resources when exiting the async context manager."""
+        await self.cleanup()
+        return False  # Don't suppress exceptions

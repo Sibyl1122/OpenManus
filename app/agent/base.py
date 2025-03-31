@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field, model_validator
 from app.llm import LLM
 from app.logger import logger
 from app.sandbox.client import SANDBOX_CLIENT
-from app.schema import ROLE_TYPE, AgentState, Memory, Message
+from app.schema import ROLE_TYPE, AgentState, Memory, Message, Role
 
 
 class BaseAgent(BaseModel, ABC):
@@ -113,6 +113,11 @@ class BaseAgent(BaseModel, ABC):
         kwargs = {"base64_image": base64_image, **(kwargs if role == "tool" else {})}
         self.memory.add_message(message_map[role](content, **kwargs))
 
+    async def cleanup(self):
+        """清理代理资源，可由子类扩展实现特定资源的清理"""
+        # 基础实现为空，子类可以扩展
+        pass
+
     async def run(self, request: Optional[str] = None) -> str:
         """Execute the agent's main loop asynchronously.
 
@@ -128,29 +133,38 @@ class BaseAgent(BaseModel, ABC):
         if self.state != AgentState.IDLE:
             raise RuntimeError(f"Cannot run agent from state: {self.state}")
 
+        # 调用初始化方法，如果存在的话
+        if hasattr(self, "initialize") and callable(getattr(self, "initialize")):
+            await self.initialize()
+
         if request:
             self.update_memory("user", request)
 
         results: List[str] = []
-        async with self.state_context(AgentState.RUNNING):
-            while (
-                self.current_step < self.max_steps and self.state != AgentState.FINISHED
-            ):
-                self.current_step += 1
-                logger.info(f"Executing step {self.current_step}/{self.max_steps}")
-                step_result = await self.step()
+        try:
+            async with self.state_context(AgentState.RUNNING):
+                while (
+                    self.current_step < self.max_steps and self.state != AgentState.FINISHED
+                ):
+                    self.current_step += 1
+                    logger.info(f"Executing step {self.current_step}/{self.max_steps}")
+                    step_result = await self.step()
 
-                # Check for stuck state
-                if self.is_stuck():
-                    self.handle_stuck_state()
+                    # Check for stuck state
+                    if self.is_stuck():
+                        self.handle_stuck_state()
 
-                results.append(f"Step {self.current_step}: {step_result}")
+                    results.append(f"Step {self.current_step}: {step_result}")
 
-            if self.current_step >= self.max_steps:
-                self.current_step = 0
-                self.state = AgentState.IDLE
-                results.append(f"Terminated: Reached max steps ({self.max_steps})")
-        await SANDBOX_CLIENT.cleanup()
+                if self.current_step >= self.max_steps:
+                    self.current_step = 0
+                    self.state = AgentState.IDLE
+                    results.append(f"Terminated: Reached max steps ({self.max_steps})")
+        finally:
+            # 总是清理资源，即使发生异常
+            await self.cleanup()
+            await SANDBOX_CLIENT.cleanup()
+
         return "\n".join(results) if results else "No steps executed"
 
     @abstractmethod
@@ -194,3 +208,24 @@ class BaseAgent(BaseModel, ABC):
     def messages(self, value: List[Message]):
         """Set the list of messages in the agent's memory."""
         self.memory.messages = value
+
+
+# Add a concrete Agent class that inherits from BaseAgent for backward compatibility
+class Agent(BaseAgent):
+    """Concrete implementation of BaseAgent for backward compatibility.
+
+    This class exists to maintain compatibility with code that expects an 'Agent' class.
+    """
+
+    async def step(self) -> str:
+        """Default implementation of the abstract step method."""
+        return "Default step implementation"
+
+    async def add_message(self, role: ROLE_TYPE, content: str, base64_image: Optional[str] = None, **kwargs) -> None:
+        """Add a message to the agent's memory (alias for update_memory)."""
+        self.update_memory(role, content, base64_image, **kwargs)
+
+    @property
+    def message_history(self) -> List[Message]:
+        """Alias for messages property."""
+        return self.messages
