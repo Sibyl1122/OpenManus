@@ -255,7 +255,10 @@ class ImageUnderstanding(BaseTool):
 提取的文本内容：
 {ocr_text}
 
-请提供详细的分析结果。
+请提供详细的与用户请求有关的分析结果。
+<用户请求>
+{goal}
+</用户请求>
 """
             else:
                 logger.warning("未能从图像中提取到文本")

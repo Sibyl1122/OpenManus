@@ -1,16 +1,18 @@
 from pydantic import Field
 
-from app.agent.browser import BrowserAgent
 from app.config import config
 from app.prompt.browser import NEXT_STEP_PROMPT as BROWSER_NEXT_STEP_PROMPT
 from app.prompt.manus import NEXT_STEP_PROMPT, SYSTEM_PROMPT
 from app.tool import Terminate, ToolCollection
-from app.tool.browser_use_tool import BrowserUseTool
 from app.tool.python_execute import PythonExecute
 from app.tool.str_replace_editor import StrReplaceEditor
+from app.tool.browser_use_tool import BrowserUseTool
+from app.tool.file_saver import FileSaver
+from app.agent.toolcall import ToolCallAgent
 
 
-class Manus(BrowserAgent):
+
+class Manus(ToolCallAgent):
     """
     一个多功能的通用代理，使用规划功能解决各种任务。
 
@@ -33,7 +35,7 @@ class Manus(BrowserAgent):
     # 向工具集合中添加通用工具（不包括浏览器工具，它将在初始化时添加）
     available_tools: ToolCollection = Field(
         default_factory=lambda: ToolCollection(
-            PythonExecute(), StrReplaceEditor(), Terminate()
+            BrowserUseTool(), PythonExecute(), StrReplaceEditor(), FileSaver(),Terminate()
         )
     )
 
@@ -67,18 +69,18 @@ class Manus(BrowserAgent):
         # 这通过不扫描整个对话历史来优化性能
         recent_messages = self.memory.messages[-3:] if self.memory.messages else []
 
-        # 检查任何最近的消息内容中是否包含browser_use
-        # 这表明浏览器工具当前处于活动状态
-        browser_in_use = any(
-            "browser_use" in msg.content.lower()
-            for msg in recent_messages
-            if hasattr(msg, "content") and isinstance(msg.content, str)
-        )
+        # # 检查任何最近的消息内容中是否包含browser_use
+        # # 这表明浏览器工具当前处于活动状态
+        # browser_in_use = any(
+        #     "browser_use" in msg.content.lower()
+        #     for msg in recent_messages
+        #     if hasattr(msg, "content") and isinstance(msg.content, str)
+        # )
 
-        if browser_in_use:
-            # 如果正在使用浏览器，临时切换到浏览器专用提示
-            # 这为浏览器操作提供了专门的上下文
-            self.next_step_prompt = BROWSER_NEXT_STEP_PROMPT
+        # if browser_in_use:
+        #     # 如果正在使用浏览器，临时切换到浏览器专用提示
+        #     # 这为浏览器操作提供了专门的上下文
+        #     self.next_step_prompt = BROWSER_NEXT_STEP_PROMPT
 
         # 调用父类的think方法执行实际的思考过程
         # 这利用了BrowserAgent的think逻辑，同时使用我们的上下文感知提示

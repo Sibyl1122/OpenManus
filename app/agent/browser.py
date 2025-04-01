@@ -141,14 +141,6 @@ class BrowserAgent(ToolCallAgent):
             if pixels_below > 0:
                 content_below_info = f" ({pixels_below} pixels)"
 
-            # Add screenshot as base64 if available
-            if self._current_base64_image:
-                # Create a message with image attachment
-                image_message = Message.user_message(
-                    content="Current browser screenshot:",
-                    base64_image=self._current_base64_image,
-                )
-                self.memory.add_message(image_message)
 
         # Replace placeholders with actual browser state info
         self.next_step_prompt = NEXT_STEP_PROMPT.format(
@@ -161,7 +153,6 @@ class BrowserAgent(ToolCallAgent):
 
         # Call parent implementation
         result = await super().think()
-
         # Reset the next_step_prompt to its original state
         self.next_step_prompt = NEXT_STEP_PROMPT
 

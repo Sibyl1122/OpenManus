@@ -14,6 +14,7 @@ from pydantic import Field, field_validator
 from pydantic_core.core_schema import ValidationInfo
 from app.logger import logger
 from app.config import config, WORKSPACE_ROOT
+from app.schema import Message
 
 
 from app.config import config
@@ -265,9 +266,8 @@ class BrowserUseTool(BaseTool, Generic[Context]):
                     # 步骤4：将结果整合到代理对话中
                     logger.info(f"分析结果: {analysis}")
                     return ToolResult(
-                        output=f"Navigated to {url}\n analysis: {analysis}",
+                        output=f"Navigated to {url} \n and webpage content: {analysis}",
                         screenshot_path=saved_path,
-                        base64_image=screenshot_result.base64_image if hasattr(screenshot_result, 'base64_image') else None
                     )
 
                 elif action == "web_search":
