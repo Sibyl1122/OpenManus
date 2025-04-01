@@ -53,5 +53,5 @@ class BaseFlow(BaseModel, ABC):
         self.agents[key] = agent
 
     @abstractmethod
-    async def execute(self, input_text: str) -> str:
+    async def execute(self, input_text: str, job_id: str) -> str:
         """Execute the flow with given input"""

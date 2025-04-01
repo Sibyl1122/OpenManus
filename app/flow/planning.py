@@ -91,7 +91,7 @@ class PlanningFlow(BaseFlow):
         # 回退到主要代理
         return self.primary_agent
 
-    async def execute(self, input_text: str) -> str:
+    async def execute(self, input_text: str, job_id: str) -> str:
         """使用代理执行计划流程。"""
         try:
             if not self.primary_agent:
@@ -99,7 +99,7 @@ class PlanningFlow(BaseFlow):
 
             # 如果提供了输入，则创建初始计划
             if input_text:
-                await self._create_initial_plan(input_text)
+                await self._create_initial_plan(input_text,job_id)
 
                 # 验证计划是否成功创建
                 if self.active_plan_id not in self.planning_tool.plans:
@@ -133,9 +133,9 @@ class PlanningFlow(BaseFlow):
             logger.error(f"Error in PlanningFlow: {str(e)}")
             return f"Execution failed: {str(e)}"
 
-    async def _create_initial_plan(self, request: str) -> None:
+    async def _create_initial_plan(self, request: str, job_id: str) -> None:
         """使用流程的LLM和PlanningTool基于请求创建初始计划。"""
-        logger.info(f"Creating initial plan with ID: {self.active_plan_id}")
+        logger.info(f"Creating initial plan with ID: {self.active_plan_id},for job: {job_id}")
 
         # 为计划创建创建系统消息
         system_message = Message.system_message(

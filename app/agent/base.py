@@ -118,7 +118,7 @@ class BaseAgent(BaseModel, ABC):
         # 基础实现为空，子类可以扩展
         pass
 
-    async def run(self, request: Optional[str] = None) -> str:
+    async def run(self, request: Optional[str] = None, job_id: Optional[str] = None) -> str:
         """Execute the agent's main loop asynchronously.
 
         Args:
@@ -142,14 +142,13 @@ class BaseAgent(BaseModel, ABC):
 
         results: List[str] = []
         try:
-            async with self.state_context(AgentState.RUNNING):
+            async with self.state_con 男男女女男男女女内容4额3；跑text(AgentState.RUNNING):
                 while (
                     self.current_step < self.max_steps and self.state != AgentState.FINISHED
                 ):
                     self.current_step += 1
                     logger.info(f"Executing step {self.current_step}/{self.max_steps}")
                     step_result = await self.step()
-
                     # Check for stuck state
                     if self.is_stuck():
                         self.handle_stuck_state()

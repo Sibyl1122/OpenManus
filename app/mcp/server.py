@@ -13,6 +13,8 @@ from typing import Any, Dict, Optional
 
 from mcp.server.fastmcp import FastMCP
 
+from app.db import init_db
+from app.db.job_runner import job_runner
 from app.logger import logger
 from app.tool.base import BaseTool
 from app.tool.bash import Bash
@@ -28,11 +30,15 @@ class MCPServer:
         self.server = FastMCP(name)
         self.tools: Dict[str, BaseTool] = {}
 
+        # Initialize database
+        init_db()
+
         # 初始化除浏览器外的标准工具
         self.tools["bash"] = Bash()
         # BrowserUseTool将在异步上下文中创建
         self.tools["editor"] = StrReplaceEditor()
         self.tools["terminate"] = Terminate()
+        # 注意：JobTool 工具将由工具注册器添加，避免重复
 
         # 注册异步清理回调
         atexit.register(lambda: asyncio.run(self._cleanup_resources()))
@@ -53,6 +59,11 @@ class MCPServer:
     async def _cleanup_resources(self):
         """清理所有资源，特别是浏览器资源"""
         logger.info("清理服务器资源")
+
+        # Shutdown job runner
+        logger.info("Shutting down job runner")
+        await job_runner.shutdown()
+
         if self._browser_context_manager is not None:
             try:
                 logger.info("正在关闭浏览器上下文")
