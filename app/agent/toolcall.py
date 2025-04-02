@@ -9,7 +9,7 @@ from app.logger import logger
 from app.prompt.toolcall import NEXT_STEP_PROMPT, SYSTEM_PROMPT
 from app.schema import TOOL_CHOICE_TYPE, AgentState, Message, ToolCall, ToolChoice
 from app.tool import CreateChatCompletion, Terminate, ToolCollection
-
+from app.agent.utils.equals import contains
 
 TOOL_CALL_REQUIRED = "Tool calls required but none provided"
 
@@ -78,6 +78,19 @@ class ToolCallAgent(ReActAgent):
 
         # Log response info
         logger.info(f"✨ {self.name}'s thoughts: {content}")
+        ## 如果content不为空，则判断content里是否包含需要用户请求
+        if content:
+            result = await contains(content, "寻求用户输入")
+            if result and not any(call.function.name == "request_user_input" for call in tool_calls):
+                result = await self.available_tools.execute(
+                    name="request_user_input",
+                    tool_input={
+                        "prompt": "请提供这些信息",
+                        "reason": "寻求用户输入"
+                    }
+                )
+                self.memory.add_message(Message.user_message(result))
+
         logger.info(
             f"🛠️ {self.name} selected {len(tool_calls) if tool_calls else 0} tools to use"
         )

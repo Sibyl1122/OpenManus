@@ -293,6 +293,11 @@ class LLM:
             ... ]
             >>> formatted = LLM.format_messages(msgs)
         """
+        # Move the first message to the end if there are at least 2 messages
+        if len(messages) >= 2:
+            messages = messages[1:] + [messages[0]]
+            messages.append(Message.user_message("如果当前任务已经完成，请使用`terminate`工具。如果需要用户输入，请使用`request_user_input`工具。"))
+
         formatted_messages = []
 
         for message in messages:

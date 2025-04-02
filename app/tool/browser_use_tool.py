@@ -426,7 +426,7 @@ Page content:
 {page}
 """
                         # Format the prompt with the goal and content
-                        max_content_length = min(50000, len(content))
+                        max_content_length = min(25000, len(content))
                         formatted_prompt = prompt_text.format(
                             goal=goal, page=content[:max_content_length]
                         )
@@ -459,7 +459,7 @@ Page content:
                         response = await self.llm.ask_tool(
                             messages,
                             tools=[extraction_function],
-                            tool_choice="required",
+                            tool_choice="auto",
                         )
 
                         # Extract content from function call response
